@@ -1,9 +1,8 @@
 name: Release
 
+# The fork publishes Docker releases through docker-publish.yml.
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_call:
 
 permissions:
   contents: write

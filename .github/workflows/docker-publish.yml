@@ -1,27 +1,55 @@
-# Publish Docker image
-# Copy from new-api 
-# https://github.com/QuantumNous/new-api/blob/main/.github/workflows/docker-image-arm64.yml
-# The native-architecture build matrix is delegated to the shared reusable
-# workflow docker-build.yml (mode: release).
-
-name: Publish Docker image
+name: Publish Docker release
 
 on:
   push:
     tags:
       - 'v*'
+      # The upstream sync workflow calls this workflow directly for these tags.
+      - '!v*-fork'
+  workflow_call:
+    inputs:
+      ref:
+        description: Commit SHA or ref to build
+        required: true
+        type: string
+      tag:
+        description: Version tag to publish
+        required: true
+        type: string
+      upstream_tag:
+        description: Upstream release that triggered the sync
+        type: string
+      upstream_ref:
+        description: Exact upstream release commit used as the base
+        type: string
+      prerelease:
+        description: Whether the upstream release is a prerelease
+        type: boolean
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: true
+      DOCKERHUB_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dockerhub-axonhub-release
+  queue: max
+
+env:
+  DOCKERHUB_IMAGE: foreverlwy/axonhub
 
 jobs:
   build_single_arch:
     name: Build & push (release)
+    if: github.repository == 'forever-lwy/axonhub' && !github.event.deleted
     uses: ./.github/workflows/docker-build.yml
     with:
       mode: release
-      ref: ${{ github.sha }}
-      tag: ${{ github.ref_name }}
-    permissions:
-      contents: read
-      packages: write
+      ref: ${{ inputs.ref || github.sha }}
+      tag: ${{ inputs.tag || github.ref_name }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -30,27 +58,54 @@ jobs:
     name: Create multi-arch manifests (Docker Hub)
     needs: [build_single_arch]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - name: Extract tag
-        run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_ENV
-
       - name: Log in to Docker Hub
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Create & push manifest (Docker Hub - version)
+      - name: Push version and latest manifests to Docker Hub
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           docker buildx imagetools create \
-            -t looplj/axonhub:${TAG} \
-            looplj/axonhub:${TAG}-amd64 \
-            looplj/axonhub:${TAG}-arm64
+            -t "${DOCKERHUB_IMAGE}:${TAG}" \
+            -t "${DOCKERHUB_IMAGE}:latest" \
+            "${DOCKERHUB_IMAGE}:${TAG}-amd64" \
+            "${DOCKERHUB_IMAGE}:${TAG}-arm64"
 
-      - name: Create & push manifest (Docker Hub - latest)
+  fork_release:
+    needs: create_manifests
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Publish the fork release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag || github.ref_name }}
+          BUILD_REF: ${{ inputs.ref || github.sha }}
+          UPSTREAM_TAG: ${{ inputs.upstream_tag }}
+          UPSTREAM_REF: ${{ inputs.upstream_ref }}
+          PRERELEASE: ${{ inputs.prerelease }}
         run: |
-          docker buildx imagetools create \
-            -t looplj/axonhub:latest \
-            looplj/axonhub:latest-amd64 \
-            looplj/axonhub:latest-arm64
+          if draft=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft 2>/dev/null); then
+            if [[ "$draft" == true ]]; then
+              gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+            fi
+            exit 0
+          fi
+
+          notes=$(printf 'Docker Hub images:\n\n- `foreverlwy/axonhub:%s`\n- `foreverlwy/axonhub:latest`' "$TAG")
+          flags=()
+          if [[ -n "$UPSTREAM_TAG" ]]; then
+            notes+=$(printf '\n\nBased on [upstream %s](https://github.com/looplj/axonhub/releases/tag/%s).\n\n- Upstream commit: `%s`\n- Fork build commit: `%s`' \
+              "$UPSTREAM_TAG" "$UPSTREAM_TAG" "$UPSTREAM_REF" "$BUILD_REF")
+            if [[ "$PRERELEASE" == true ]]; then
+              flags+=(--prerelease)
+            fi
+          elif [[ "$TAG" == *-* ]]; then
+            flags+=(--prerelease)
+          fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes "$notes" "${flags[@]}"

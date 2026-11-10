@@ -1,0 +1,128 @@
+name: Sync upstream and release
+
+on:
+  schedule:
+    - cron: '23 20 * * *' # 04:23 China Standard Time
+  workflow_dispatch:
+
+concurrency:
+  group: sync-upstream
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    if: github.repository == 'forever-lwy/axonhub' && github.ref == 'refs/heads/unstable'
+    runs-on: ubuntu-latest
+    outputs:
+      ref: ${{ steps.release.outputs.ref }}
+      tag: ${{ steps.release.outputs.tag }}
+      upstream_tag: ${{ steps.release.outputs.upstream_tag }}
+      upstream_ref: ${{ steps.release.outputs.upstream_ref }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+    env:
+      UPSTREAM: looplj/axonhub
+    steps:
+      - name: Check sync credentials
+        env:
+          SYNC_TOKEN: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+        run: |
+          if [[ -z "$SYNC_TOKEN" ]]; then
+            echo '::error::Set UPSTREAM_SYNC_TOKEN with Contents and Workflows read/write access to this fork.'
+            exit 1
+          fi
+
+      - name: Check out the fork
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: unstable
+          fetch-depth: 0
+          # The built-in token cannot push changes to workflow files.
+          token: ${{ secrets.UPSTREAM_SYNC_TOKEN }}
+
+      - name: Merge upstream into unstable
+        run: |
+          git fetch --no-tags "https://github.com/$UPSTREAM.git" refs/heads/unstable:refs/remotes/upstream/unstable
+          before=$(git rev-parse HEAD)
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if ! git merge --no-edit refs/remotes/upstream/unstable; then
+            echo '::error::Upstream merge failed. Resolve the conflict on unstable and run the workflow again.'
+            exit 1
+          fi
+          if [[ "$(git rev-parse HEAD)" != "$before" ]]; then
+            git push origin HEAD:refs/heads/unstable
+          fi
+
+      - name: Prepare the newest published upstream release
+        id: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version_pattern='^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'
+          release=$(gh api --paginate --slurp "repos/$UPSTREAM/releases?per_page=100" \
+            | jq -c --arg version_pattern "$version_pattern" '
+              [.[][] | select(.draft == false and .published_at != null and (.tag_name | test($version_pattern)))]
+              | max_by(.published_at) // empty')
+          if [[ -z "$release" ]]; then
+            exit 0
+          fi
+          upstream_tag=$(jq -r .tag_name <<< "$release")
+          tag="${upstream_tag}-fork"
+          published=$(gh api --paginate "repos/$GITHUB_REPOSITORY/releases?per_page=100" \
+            --jq '.[] | select(.draft == false) | .tag_name')
+          if grep -Fxq "$tag" <<< "$published"; then
+            echo "Release $tag is already published."
+            exit 0
+          fi
+
+          upstream_tip=$(git rev-parse refs/remotes/upstream/unstable)
+          git fetch --no-tags "https://github.com/$UPSTREAM.git" "refs/tags/$upstream_tag"
+          upstream_ref=$(git rev-parse 'FETCH_HEAD^{commit}')
+          if ! git merge-base --is-ancestor "$upstream_ref" "$upstream_tip"; then
+            echo "Upstream $upstream_tag is not in the synced unstable branch yet."
+            exit 0
+          fi
+
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            ref=$(git rev-parse "refs/tags/$tag^{commit}")
+            if [[ "$(git rev-list --parents -n 1 "$ref")" != "$ref $upstream_ref" ]]; then
+              echo "::error::Existing tag $tag is not based directly on upstream $upstream_tag ($upstream_ref)."
+              exit 1
+            fi
+          else
+            # Apply the fork's changes relative to the synced upstream tip onto the release commit.
+            if ! tree=$(git merge-tree --write-tree --merge-base="$upstream_tip" "$upstream_ref" HEAD); then
+              printf '%s\n' "$tree"
+              echo "::error::Could not apply fork changes to upstream $upstream_tag ($upstream_ref)."
+              exit 1
+            fi
+            ref=$(git commit-tree "$tree" -p "$upstream_ref" -m "Release $tag" -m "Fork source: $(git rev-parse HEAD)")
+            git push origin "$ref:refs/tags/$tag"
+          fi
+          {
+            echo "ref=$ref"
+            echo "tag=$tag"
+            echo "upstream_tag=$upstream_tag"
+            echo "upstream_ref=$upstream_ref"
+            echo "prerelease=$(jq -r .prerelease <<< "$release")"
+          } >> "$GITHUB_OUTPUT"
+
+  release:
+    needs: sync
+    if: needs.sync.outputs.tag != ''
+    uses: ./.github/workflows/docker-publish.yml
+    permissions:
+      contents: write
+    with:
+      ref: ${{ needs.sync.outputs.ref }}
+      tag: ${{ needs.sync.outputs.tag }}
+      upstream_tag: ${{ needs.sync.outputs.upstream_tag }}
+      upstream_ref: ${{ needs.sync.outputs.upstream_ref }}
+      prerelease: ${{ needs.sync.outputs.prerelease == 'true' }}
+    secrets:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
