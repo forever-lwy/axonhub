@@ -48,6 +48,14 @@ export const modelCardSchema = z.object({
 });
 export type ModelCard = z.infer<typeof modelCardSchema>;
 
+// GraphQL accepts partial model card details when creating or editing a model.
+const modelCardInputSchema = modelCardSchema.extend({
+  reasoning: modelReasoningSchema.partial().optional(),
+  modalities: modelModalitiesSchema.partial().optional(),
+  cost: modelCostSchema.partial().optional(),
+  limit: modelLimitSchema.partial().optional(),
+});
+
 export const channelModelAssociationSchema = z.object({
   channelId: z.number(),
   modelId: z.string(),
@@ -170,7 +178,7 @@ export const createModelInputSchema = z.object({
   name: z.string().min(1, 'Name is required'),
   icon: z.string().min(1, 'Icon is required'),
   group: z.string().min(1, 'Group is required'),
-  modelCard: modelCardSchema,
+  modelCard: modelCardInputSchema,
   settings: modelSettingsSchema.optional(),
   status: modelStatusSchema.optional(),
   remark: z.string().optional(),
@@ -184,7 +192,7 @@ export const updateModelInputSchema = z.object({
   name: z.string().min(1, 'Name is required').optional(),
   icon: z.string().min(1, 'Icon is required').optional(),
   group: z.string().min(1, 'Group is required').optional(),
-  modelCard: modelCardSchema.optional(),
+  modelCard: modelCardInputSchema.optional(),
   settings: modelSettingsSchema.optional(),
   status: modelStatusSchema.optional(),
   remark: z.string().optional().nullable(),
