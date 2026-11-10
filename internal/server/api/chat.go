@@ -43,6 +43,7 @@ const (
 	sseHeartbeatNone sseHeartbeatFormat = iota
 	sseHeartbeatOpenAI
 	sseHeartbeatAnthropic
+	sseHeartbeatGemini
 )
 
 type ChatCompletionHandlers struct {
@@ -704,6 +705,11 @@ func writeSSEHeartbeat(writer io.Writer, format sseHeartbeatFormat) error {
 	case sseHeartbeatAnthropic:
 		_, err := io.WriteString(writer, "event: ping\ndata: {\"type\":\"ping\"}\n\n")
 		return err
+	case sseHeartbeatGemini:
+		// Gemini SDKs can reject SSE comments. Two newlines form an empty
+		// frame that is skipped without affecting the next data frame.
+		_, err := io.WriteString(writer, "\n\n")
+		return err
 	default:
 		return errors.New("unsupported SSE heartbeat format")
 	}
@@ -715,6 +721,8 @@ func sseHeartbeatFormatName(format sseHeartbeatFormat) string {
 		return "openai"
 	case sseHeartbeatAnthropic:
 		return "anthropic"
+	case sseHeartbeatGemini:
+		return "gemini"
 	default:
 		return "unknown"
 	}
