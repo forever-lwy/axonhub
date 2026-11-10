@@ -11,6 +11,9 @@ name: Docker build (shared)
 permissions:
   contents: read
 
+env:
+  DOCKERHUB_IMAGE: foreverlwy/axonhub
+
 on:
   workflow_call:
     inputs:
@@ -96,8 +99,9 @@ jobs:
         if: inputs.mode != 'test'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
-          images: |
-            looplj/axonhub
+          context: git
+          images: ${{ env.DOCKERHUB_IMAGE }}
+          tags: type=raw,value=${{ inputs.tag || format('{0}-unstable.{1}', inputs.base_version, inputs.build_date) }}
 
       - name: Resolve image tags
         id: tags
@@ -110,14 +114,12 @@ jobs:
         run: |
           case "$MODE" in
             release)
-              printf -v TAGS '%s\n%s' \
-                "looplj/axonhub:${TAG}-${ARCH}" \
-                "looplj/axonhub:latest-${ARCH}"
+              TAGS="${DOCKERHUB_IMAGE}:${TAG}-${ARCH}"
               ;;
             unstable)
               printf -v TAGS '%s\n%s' \
-                "looplj/axonhub:unstable-${ARCH}" \
-                "looplj/axonhub:unstable-${BUILD_DATE}-${ARCH}"
+                "${DOCKERHUB_IMAGE}:unstable-${ARCH}" \
+                "${DOCKERHUB_IMAGE}:unstable-${BUILD_DATE}-${ARCH}"
               ;;
             *)
               echo "Unknown mode: $MODE" >&2
