@@ -16,6 +16,7 @@
 //	只有请求处理 goroutine 可以写响应；后台任务不能访问 Gin Context 或响应头。
 //	心跳提交 HTTP 200 后，后续错误必须通过 SSE 返回，不能再修改 HTTP 状态。
 //	取消后台任务后必须等待其退出，避免关闭流与首条事件读取并发。
+
 package api
 
 import (
@@ -24,6 +25,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"mime/multipart"
 	"net/http"
@@ -141,9 +143,7 @@ func (heartbeat *sseHeartbeatState) writeReadyHeaders(c *gin.Context, upstream h
 		log.Warn(c.Request.Context(), "Upstream state headers arrived after SSE response was committed")
 		return false, nil
 	}
-	for name, values := range forward {
-		c.Writer.Header()[name] = values
-	}
+	maps.Copy(c.Writer.Header(), forward)
 	setSSEHeaders(c)
 	c.Header("Access-Control-Allow-Origin", "*")
 	return true, flushSSE(c.Request.Context(), c.Writer)

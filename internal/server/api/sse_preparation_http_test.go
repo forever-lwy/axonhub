@@ -13,6 +13,7 @@
 // 注意事项:
 //
 //	上游必须等下游收到心跳后才继续，避免把收到首条内容之后的心跳误当成首包保护。
+
 package api
 
 import (
@@ -259,10 +260,10 @@ func TestSSEPreparationHTTPErrorAfterHeartbeat(t *testing.T) {
 			require.NotContains(t, string(body), tc.terminal)
 			var errorPayload map[string]any
 			errorEvents := 0
-			for _, line := range strings.Split(string(body), "\n") {
-				if strings.HasPrefix(line, "data:") && strings.Contains(line, "synthetic upstream rejection") {
+			for line := range strings.SplitSeq(string(body), "\n") {
+				if data, ok := strings.CutPrefix(line, "data:"); ok && strings.Contains(data, "synthetic upstream rejection") {
 					errorEvents++
-					require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &errorPayload))
+					require.NoError(t, json.Unmarshal([]byte(strings.TrimSpace(data)), &errorPayload))
 				}
 			}
 			require.Equal(t, 1, errorEvents, "the upstream rejection must be one complete SSE data event")
@@ -382,7 +383,7 @@ func newSSEPreparationHTTPFixture(t *testing.T, tc ssePreparationHTTPCase, upstr
 	handler.ChatCompletionOrchestrator = handler.ChatCompletionOrchestrator.WithChannelSelector(selector)
 	engine := gin.New()
 	done := make(chan struct{})
-	route := strings.Split(tc.path, "?")[0]
+	route, _, _ := strings.Cut(tc.path, "?")
 	if tc.name == "gemini" {
 		route = "/gemini/v1beta/models/*action"
 	}

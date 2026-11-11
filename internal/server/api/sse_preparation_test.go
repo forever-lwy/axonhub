@@ -11,6 +11,7 @@
 // 注意事项:
 //
 //	阻塞准备任务由实际心跳写入或取消信号放行，避免用睡眠推断心跳已经发送。
+
 package api
 
 import (
@@ -185,9 +186,9 @@ func TestSSEPreparationSlowErrorsUseNativeProtocol(t *testing.T) {
 			require.Equal(t, http.StatusOK, w.Code)
 			require.Contains(t, w.Header().Get("Content-Type"), "text/event-stream")
 			var payload []byte
-			for _, line := range strings.Split(w.Body.String(), "\n") {
-				if strings.HasPrefix(line, "data:") {
-					payload = []byte(strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+			for line := range strings.SplitSeq(w.Body.String(), "\n") {
+				if data, ok := strings.CutPrefix(line, "data:"); ok {
+					payload = []byte(strings.TrimSpace(data))
 				}
 			}
 			require.True(t, json.Valid(payload), "missing JSON error payload: %q", w.Body.String())
@@ -259,6 +260,7 @@ func TestSSEPreparationHeartbeatFailureCancelsAndReturnsPreparedStream(t *testin
 
 type preparationFlushWriter struct {
 	gin.ResponseWriter
+
 	afterFlush func()
 }
 
@@ -276,6 +278,7 @@ func (w *preparationFlushWriter) FlushError() error {
 
 type preparationGatedStream struct {
 	streams.Stream[*httpclient.StreamEvent]
+
 	ctx  context.Context
 	gate <-chan struct{}
 }
@@ -306,7 +309,7 @@ func TestSSEPreparationResponsesPrimePreservesEventsAndFastHeaders(t *testing.T)
 			defer cancel()
 			first := &httpclient.StreamEvent{Type: "response.created", Data: []byte(`{"type":"response.created"}`), Headers: http.Header{codex.TurnStateHeader: {"turn-test"}}}
 			last := &httpclient.StreamEvent{Type: "response.completed", Data: []byte(`{"type":"response.completed"}`)}
-			source := streams.Stream[*httpclient.StreamEvent](streams.SliceStream([]*httpclient.StreamEvent{first, last}))
+			source := streams.SliceStream([]*httpclient.StreamEvent{first, last})
 			heartbeat := newSSEHeartbeatState(SSEKeepAliveConfig{Enabled: true, Interval: time.Hour})
 			if blocked {
 				gate := make(chan struct{})
