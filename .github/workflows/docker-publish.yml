@@ -6,6 +6,17 @@ on:
       - 'v*'
       # The upstream sync workflow calls this workflow directly for these tags.
       - '!v*-fork'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, for example v1.0.0-rc.3
+        required: true
+        type: string
+      branch:
+        description: Branch or commit to build
+        required: true
+        type: string
+        default: unstable
   workflow_call:
     inputs:
       ref:
@@ -48,7 +59,7 @@ jobs:
     uses: ./.github/workflows/docker-build.yml
     with:
       mode: release
-      ref: ${{ inputs.ref || github.sha }}
+      ref: ${{ inputs.ref || inputs.branch || github.sha }}
       tag: ${{ inputs.tag || github.ref_name }}
     secrets:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -59,6 +70,18 @@ jobs:
     needs: [build_single_arch]
     runs-on: ubuntu-latest
     steps:
+      - name: Validate release tag
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          case "$TAG" in
+            v[0-9]*.[0-9]*.[0-9]*) ;;
+            *)
+              echo "Release tag must look like v1.2.3, got: $TAG" >&2
+              exit 1
+              ;;
+          esac
+
       - name: Log in to Docker Hub
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
@@ -85,7 +108,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ inputs.tag || github.ref_name }}
-          BUILD_REF: ${{ inputs.ref || github.sha }}
+          BUILD_REF: ${{ inputs.ref || inputs.branch || github.sha }}
           UPSTREAM_TAG: ${{ inputs.upstream_tag }}
           UPSTREAM_REF: ${{ inputs.upstream_ref }}
           PRERELEASE: ${{ inputs.prerelease }}
