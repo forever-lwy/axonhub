@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/modelname"
 	"github.com/looplj/axonhub/llm/pipeline"
+	"github.com/looplj/axonhub/llm/streams"
 )
 
 // Precompiled regex patterns for sanitizeResponseBody to avoid recompiling on each call.
@@ -170,6 +171,18 @@ func (m *persistRequestExecutionMiddleware) OnOutboundRawResponse(ctx context.Co
 	return response, nil
 }
 
+func (m *persistRequestExecutionMiddleware) OnOutboundRawStream(_ context.Context, stream streams.Stream[*httpclient.StreamEvent]) (streams.Stream[*httpclient.StreamEvent], error) {
+	state := m.outbound.state
+	if state != nil && state.StreamResponseHeaders != nil {
+		headers := httpclient.GetResponseHeaders(stream)
+		if m.headerObserver != nil && m.headerObserver.observed.Load() {
+			headers = m.headerObserver.load()
+		}
+		state.StreamResponseHeaders.observe(headers, m.outbound.SupportsCodexResponseHeaders())
+	}
+	return stream, nil
+}
+
 func (m *persistRequestExecutionMiddleware) OnOutboundLlmResponse(ctx context.Context, llmResp *llm.Response) (*llm.Response, error) {
 	state := m.outbound.state
 	if state == nil || state.RequestExec == nil {
@@ -239,6 +252,9 @@ func (m *persistRequestExecutionMiddleware) OnOutboundLlmResponse(ctx context.Co
 }
 
 func (m *persistRequestExecutionMiddleware) OnOutboundRawError(ctx context.Context, err error) {
+	if state := m.outbound.state; state != nil {
+		_ = state.StreamResponseHeaders.discardAttempt()
+	}
 	// Unlike queue/RPM rejection, plugin overload precedes this middleware's
 	// request callback, so this attempt has no execution to update.
 	if isPluginOverloaded(err) {

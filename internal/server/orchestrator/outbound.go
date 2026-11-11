@@ -928,6 +928,9 @@ func (p *PersistentOutboundTransformer) GetRequestedModel() string {
 // HasMoreChannels returns true if there are more candidates available for retry.
 // It implements the pipeline.Retryable interface.
 func (p *PersistentOutboundTransformer) HasMoreChannels() bool {
+	if !p.state.StreamResponseHeaders.retryAllowed() {
+		return false
+	}
 	if p.state.PluginOverloaded {
 		return false
 	}
@@ -946,6 +949,9 @@ func (p *PersistentOutboundTransformer) resetPassThroughStreamState() {
 // NextChannel moves to the next available candidate for retry.
 // It implements the pipeline.Retryable interface.
 func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
+	if err := p.state.StreamResponseHeaders.discardAttempt(); err != nil {
+		return err
+	}
 	if lifecycleOwner := streamLifecycleFromContext(ctx); lifecycleOwner != nil {
 		lifecycleOwner.closeAttempt()
 	}
@@ -995,6 +1001,9 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 // It implements the pipeline.ChannelRetryable interface, it just check the error is retryable, the
 // pipeline will ensure the maxSameChannelRetries is not exceeded.
 func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
+	if !p.state.StreamResponseHeaders.retryAllowed() {
+		return false
+	}
 	if p.state.CurrentCandidate == nil {
 		return false
 	}
@@ -1080,6 +1089,9 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 // This will reset the request execution for the same channel, so that the same request can be retried.
 // It will try the next model in the same channel if available.
 func (p *PersistentOutboundTransformer) PrepareForRetry(ctx context.Context) error {
+	if err := p.state.StreamResponseHeaders.discardAttempt(); err != nil {
+		return err
+	}
 	if lifecycleOwner := streamLifecycleFromContext(ctx); lifecycleOwner != nil {
 		lifecycleOwner.closeAttempt()
 	}

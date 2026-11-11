@@ -115,19 +115,39 @@ func (handlers *ChatCompletionHandlers) ChatCompletionWithRequest(c *gin.Context
 	}
 	genericReq = prepared
 
+	keepAlive := handlers.preparationKeepAlive(genericReq)
+	heartbeat := newSSEHeartbeatState(keepAlive)
 	processCtx := ctx
 	var abortUpstream context.CancelFunc
-	if evaluator != nil {
+	if evaluator != nil || (keepAlive.Enabled && keepAlive.Interval > 0) {
 		processCtx, abortUpstream = context.WithCancel(ctx)
 		defer abortUpstream()
 	}
-	result, err := handlers.ChatCompletionOrchestrator.Process(processCtx, genericReq)
+	if keepAlive.Enabled && keepAlive.Interval > 0 && strings.HasSuffix(genericReq.Path, "/responses") {
+		heartbeat.headers = orchestrator.NewStreamResponseHeaders()
+		heartbeat.codexSession = codex.GetSessionIDFromHeaders(genericReq.Headers) != ""
+		processCtx = orchestrator.WithStreamResponseHeaders(processCtx, heartbeat.headers)
+	}
+	result, err := waitWithSSEHeartbeats(c, processCtx, heartbeat, handlers.sseHeartbeatFormat, abortUpstream, func() (orchestrator.ChatCompletionResult, error) {
+		return handlers.ChatCompletionOrchestrator.Process(processCtx, genericReq)
+	})
+	// A canceled preparation can still return an already-created stream. Close
+	// it only after the preparation reader has exited, including error paths.
+	if result.ChatCompletionStream != nil {
+		defer func() {
+			log.Debug(ctx, "Close chat stream")
+			err := result.ChatCompletionStream.Close()
+			if waiter, ok := result.ChatCompletionStream.(streams.FinalizationWaiter); ok {
+				waiter.WaitForFinalization()
+			}
+			if err != nil {
+				logger.Error(ctx, "Error closing stream", log.Cause(err))
+			}
+		}()
+	}
 	if err != nil {
 		log.Error(ctx, "Error processing chat completion", log.Cause(err))
-
-		httpErr := transformOrchestratorError(ctx, err, handlers.ChatCompletionOrchestrator)
-		c.JSON(httpErr.StatusCode, json.RawMessage(httpErr.Body))
-
+		handlers.writePreparationError(c, err)
 		return
 	}
 
@@ -153,32 +173,28 @@ func (handlers *ChatCompletionHandlers) ChatCompletionWithRequest(c *gin.Context
 	}
 
 	if result.ChatCompletionStream != nil {
-		defer func() {
-			log.Debug(ctx, "Close chat stream")
-
-			err := result.ChatCompletionStream.Close()
-			if waiter, ok := result.ChatCompletionStream.(streams.FinalizationWaiter); ok {
-				waiter.WaitForFinalization()
-			}
-			if err != nil {
-				logger.Error(ctx, "Error closing stream", log.Cause(err))
-			}
-		}()
-
 		c.Header("Access-Control-Allow-Origin", "*")
 
 		source := wrapAnthropicInputUsage(result.ChatCompletionStream, genericReq, newInputUsageCalibration(ctx, handlers.inputUsageCache, result.Route, started))
 		source = wrapSafeguardsStream(ctx, source, evaluator, abortUpstream)
 		stream := newUpstreamErrorStream(ctx, source, handlers.ChatCompletionOrchestrator.SystemService)
 		if strings.HasSuffix(genericReq.Path, "/responses") {
-			stream = primeCodexTurnStateHeader(c.Writer.Header(), stream)
+			headers := make(http.Header)
+			stream, err = waitWithSSEHeartbeats(c, processCtx, heartbeat, handlers.sseHeartbeatFormat, abortUpstream, func() (streams.Stream[*httpclient.StreamEvent], error) {
+				return primeCodexTurnStateHeader(headers, stream), nil
+			})
+			if err != nil {
+				handlers.writePreparationError(c, err)
+				return
+			}
+			copyCodexTurnStateHeader(c.Writer.Header(), headers)
 		}
 		if handlers.StreamWriter != nil {
 			handlers.StreamWriter(c, stream)
 			return
 		}
 
-		handlers.writeSSEStream(c, stream)
+		handlers.writePreparedSSEStream(c, stream, heartbeat)
 	}
 }
 
@@ -397,6 +413,17 @@ func writeEncodedSSEStreamWithHeartbeat(
 	interval time.Duration,
 	heartbeatFormat sseHeartbeatFormat,
 ) {
+	writePreparedSSEStream(c, stream, formatErr, interval, heartbeatFormat, time.Now().Add(interval))
+}
+
+func writePreparedSSEStream(
+	c *gin.Context,
+	stream streams.Stream[*httpclient.StreamEvent],
+	formatErr StreamErrorEncoder,
+	interval time.Duration,
+	heartbeatFormat sseHeartbeatFormat,
+	nextHeartbeat time.Time,
+) {
 	ctx := c.Request.Context()
 	clientDisconnected := false
 
@@ -420,7 +447,7 @@ func writeEncodedSSEStreamWithHeartbeat(
 	// reader first so Close cannot race with Next or Current.
 	defer reader.Stop()
 
-	timer := time.NewTimer(interval)
+	timer := time.NewTimer(time.Until(nextHeartbeat))
 	defer timer.Stop()
 
 	timerC := timer.C

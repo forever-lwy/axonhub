@@ -29,6 +29,10 @@ func encodeStreamError(formatErr StreamErrorFormatter) StreamErrorEncoder {
 }
 
 func (h *ChatCompletionHandlers) writeSSEStream(c *gin.Context, stream streams.Stream[*httpclient.StreamEvent]) {
+	h.writePreparedSSEStream(c, stream, nil)
+}
+
+func (h *ChatCompletionHandlers) writePreparedSSEStream(c *gin.Context, stream streams.Stream[*httpclient.StreamEvent], heartbeat *sseHeartbeatState) {
 	encodeErr := encodeStreamError(FormatStreamError)
 	if h.streamAdapterFactory != nil {
 		var systemService *biz.SystemService
@@ -38,6 +42,10 @@ func (h *ChatCompletionHandlers) writeSSEStream(c *gin.Context, stream streams.S
 		source := stream
 		stream, encodeErr = h.streamAdapterFactory(c.Request.Context(), stream, systemService)
 		stream = preserveStreamDelivery(stream, source)
+	}
+	if heartbeat != nil && heartbeat.config.Enabled && heartbeat.config.Interval > 0 {
+		writePreparedSSEStream(c, stream, encodeErr, heartbeat.config.Interval, h.sseHeartbeatFormat, heartbeat.next)
+		return
 	}
 	writeEncodedSSEStream(c, stream, encodeErr, h.sseKeepAlive, h.sseHeartbeatFormat)
 }
