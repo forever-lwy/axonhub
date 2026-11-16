@@ -15,14 +15,14 @@ import (
 type PersistenceState struct {
 	APIKey *ent.APIKey
 
-	RequestService      *biz.RequestService
-	UsageLogService     *biz.UsageLogService
-	ChannelService      *biz.ChannelService
-	PromptProvider      PromptProvider
-	PromptProtecter     PromptProtecter
-	CandidateSelector   CandidateSelector
-	LoadBalancers       map[string]*LoadBalancer
-	RoutingPolicy       EffectiveRoutingPolicy
+	RequestService    *biz.RequestService
+	UsageLogService   *biz.UsageLogService
+	ChannelService    *biz.ChannelService
+	PromptProvider    PromptProvider
+	PromptProtecter   PromptProtecter
+	CandidateSelector CandidateSelector
+	LoadBalancers     map[string]*LoadBalancer
+	RoutingPolicy     EffectiveRoutingPolicy
 	// Settings is the system settings snapshot taken when the request started.
 	Settings *RequestSettings
 
@@ -56,6 +56,9 @@ type PersistenceState struct {
 	// ExecutionHeaders holds the upstream response headers of the latest execution
 	// until that execution's terminal update writes them.
 	ExecutionHeaders *executionHeaderObserver
+	// StreamResponseHeaders forwards successful stream metadata before first
+	// content and prevents retries once downstream headers select an attempt.
+	StreamResponseHeaders *StreamResponseHeaders
 
 	// ChannelModelsCandidates is the primary state for channel selection
 	ChannelModelsCandidates []*ChannelModelsCandidate

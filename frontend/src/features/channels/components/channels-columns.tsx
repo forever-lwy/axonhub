@@ -183,7 +183,8 @@ const ActionCell = memo(({ row }: { row: Row<Channel> }) => {
       <Button size='sm' variant='outline' className='h-8 px-3' onClick={handleDefaultTest} disabled={testChannel.isPending}>
         <IconPlayerPlay className='mr-1 h-3 w-3' />
       </Button>
-      <DropdownMenu>
+      {/* Row actions open modal dialogs. Let the dialog own the page's pointer lock. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <Button size='sm' variant='outline' className='h-8 w-8 p-0' data-testid='row-actions'>
             <DotsHorizontalIcon className='h-3 w-3' />

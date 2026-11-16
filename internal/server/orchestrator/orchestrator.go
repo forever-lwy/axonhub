@@ -253,6 +253,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 
 	state := &PersistenceState{
 		ResponsesContinuation: continuation,
+		StreamResponseHeaders: streamResponseHeadersFromContext(ctx),
 		APIKey:                apiKey,
 		RequestService:        processor.RequestService,
 		UsageLogService:       processor.UsageLogService,

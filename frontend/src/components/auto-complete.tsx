@@ -21,7 +21,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
  */
-import { useMemo, useState } from 'react';
+import { useMemo, useState, type ComponentPropsWithRef } from 'react';
 import { Command as CommandPrimitive } from 'cmdk';
 import { Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -40,12 +40,14 @@ type Props<T extends string> = {
   items: { value: T; label: string }[];
   isLoading?: boolean;
   emptyMessage?: string;
+  label?: string;
   placeholder?: string;
+  clearOnReselect?: boolean;
   /** 指定 Popover Portal 的容器元素，用于解决在 Dialog 内无法滚动的问题 */
   portalContainer?: HTMLElement | null;
   /** Pass a keydown handler through to the underlying input (e.g. for Enter-to-submit). */
   onKeyDown?: React.KeyboardEventHandler<HTMLInputElement>;
-};
+} & Pick<ComponentPropsWithRef<'input'>, 'id' | 'ref' | 'aria-describedby' | 'aria-invalid'>;
 
 export function AutoComplete<T extends string>({
   selectedValue,
@@ -55,9 +57,12 @@ export function AutoComplete<T extends string>({
   items,
   isLoading,
   emptyMessage = 'No items.',
+  label,
   placeholder = 'Search...',
+  clearOnReselect = true,
   portalContainer,
   onKeyDown,
+  ...inputProps
 }: Props<T>) {
   const [open, setOpen] = useState(false);
 
@@ -109,7 +114,7 @@ export function AutoComplete<T extends string>({
   }, [items, searchValue]);
 
   const onSelectItem = (inputValue: string) => {
-    if (inputValue === selectedValue) {
+    if (clearOnReselect && inputValue === selectedValue) {
       reset();
     } else {
       onSelectedValueChange(inputValue as T);
@@ -122,7 +127,7 @@ export function AutoComplete<T extends string>({
   return (
     <div className='flex w-full items-center'>
       <Popover open={open} onOpenChange={setOpen}>
-        <Command shouldFilter={false} className='flex-1 bg-transparent'>
+        <Command label={label} shouldFilter={false} className='flex-1 bg-transparent'>
           <PopoverAnchor asChild>
             <CommandPrimitive.Input
               asChild
@@ -136,7 +141,7 @@ export function AutoComplete<T extends string>({
               onFocus={() => setOpen(true)}
               onBlur={onInputBlur}
             >
-              <Input placeholder={placeholder} className='w-full' />
+              <Input placeholder={placeholder} className='w-full' {...inputProps} />
             </CommandPrimitive.Input>
           </PopoverAnchor>
           {!open && <CommandList aria-hidden='true' className='hidden' />}
@@ -165,7 +170,7 @@ export function AutoComplete<T extends string>({
                       key={option.value}
                       value={option.value}
                       onMouseDown={(e) => e.preventDefault()}
-                      onSelect={onSelectItem}
+                      onSelect={() => onSelectItem(option.value)}
                       className='w-full max-w-full min-w-0'
                     >
                       <Check className={cn('mr-2 h-4 w-4', selectedValue === option.value ? 'opacity-100' : 'opacity-0')} />

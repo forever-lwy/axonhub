@@ -36,6 +36,7 @@ type GeminiHandlersParams struct {
 	ChannelLimiterManager       *orchestrator.ChannelLimiterManager
 	ProviderQuotaStatusProvider orchestrator.ProviderQuotaStatusProvider
 	PluginManager               *plugin.Manager
+	SSEKeepAliveConfig          SSEKeepAliveConfig
 }
 
 type GeminiHandlers struct {
@@ -46,8 +47,8 @@ type GeminiHandlers struct {
 
 func NewGeminiHandlers(params GeminiHandlersParams) *GeminiHandlers {
 	return &GeminiHandlers{
-		ChatCompletionHandlers: NewChatCompletionHandlers(
-			orchestrator.NewChatCompletionOrchestrator(
+		ChatCompletionHandlers: &ChatCompletionHandlers{
+			ChatCompletionOrchestrator: orchestrator.NewChatCompletionOrchestrator(
 				params.ChannelService,
 				params.DefaultSelector,
 				params.RequestService,
@@ -62,20 +63,22 @@ func NewGeminiHandlers(params GeminiHandlersParams) *GeminiHandlers {
 				params.ChannelLimiterManager,
 				params.ProviderQuotaStatusProvider,
 				orchestratorPlugins(params.PluginManager)),
-		),
+			sseKeepAlive:       params.SSEKeepAliveConfig,
+			sseHeartbeatFormat: sseHeartbeatGemini,
+			inputUsageCache:    newInputUsageCache(),
+		},
 		ChannelService: params.ChannelService,
 		ModelService:   params.ModelService,
 	}
 }
 
 func (handlers *GeminiHandlers) GenerateContent(c *gin.Context) {
-	alt := c.Query("alt")
-	switch alt {
-	case "sse":
-		handlers.ChatCompletionHandlers.WithStreamWriter(WriteSSEStream).ChatCompletion(c)
-	default:
-		handlers.ChatCompletionHandlers.WithStreamWriter(WriteGeminiStream).ChatCompletion(c)
+	if c.Query("alt") == "sse" {
+		handlers.ChatCompletionHandlers.ChatCompletion(c)
+		return
 	}
+
+	handlers.ChatCompletionHandlers.WithStreamWriter(WriteGeminiStream).ChatCompletion(c)
 }
 
 func WriteGeminiStream(c *gin.Context, stream streams.Stream[*httpclient.StreamEvent]) {
