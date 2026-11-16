@@ -94,9 +94,9 @@ jobs:
               exit 1
             fi
           else
-            # Apply the fork's changes relative to the synced upstream tip onto the release commit.
-            if ! tree=$(git merge-tree --write-tree --merge-base="$upstream_tip" "$upstream_ref" HEAD); then
-              printf '%s\n' "$tree"
+            # Keep the release's exact code baseline. Only publishing-workflow
+            # conflicts may preserve the fork version; application conflicts fail.
+            if ! tree=$(python3 scripts/prepare_fork_release_tree.py "$upstream_tip" "$upstream_ref" HEAD); then
               echo "::error::Could not apply fork changes to upstream $upstream_tag ($upstream_ref)."
               exit 1
             fi
