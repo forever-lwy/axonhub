@@ -785,11 +785,12 @@ type ComplexityRoot struct {
 	}
 
 	DisabledAPIKey struct {
-		DisabledAt func(childComplexity int) int
-		ErrorCode  func(childComplexity int) int
-		ExpiresAt  func(childComplexity int) int
-		Key        func(childComplexity int) int
-		Reason     func(childComplexity int) int
+		DisabledAt    func(childComplexity int) int
+		ErrorCode     func(childComplexity int) int
+		ExpiresAt     func(childComplexity int) int
+		Key           func(childComplexity int) int
+		QuotaDisabled func(childComplexity int) int
+		Reason        func(childComplexity int) int
 	}
 
 	ExcludeAssociation struct {
@@ -2175,6 +2176,7 @@ type ComplexityRoot struct {
 	TransformOptions struct {
 		ForceArrayInputs               func(childComplexity int) int
 		ForceArrayInstructions         func(childComplexity int) int
+		ForceArrayStop                 func(childComplexity int) int
 		ReasoningEffortMapping         func(childComplexity int) int
 		ReplaceDeveloperRoleWithSystem func(childComplexity int) int
 	}
@@ -5426,6 +5428,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.DisabledAPIKey.Key(childComplexity), true
+	case "DisabledAPIKey.quotaDisabled":
+		if e.complexity.DisabledAPIKey.QuotaDisabled == nil {
+			break
+		}
+
+		return e.complexity.DisabledAPIKey.QuotaDisabled(childComplexity), true
 	case "DisabledAPIKey.reason":
 		if e.complexity.DisabledAPIKey.Reason == nil {
 			break
@@ -12132,6 +12140,12 @@ func (e *executableSchema) Complexity(ctx context.Context, typeName, field strin
 		}
 
 		return e.complexity.TransformOptions.ForceArrayInstructions(childComplexity), true
+	case "TransformOptions.forceArrayStop":
+		if e.complexity.TransformOptions.ForceArrayStop == nil {
+			break
+		}
+
+		return e.complexity.TransformOptions.ForceArrayStop(childComplexity), true
 	case "TransformOptions.reasoningEffortMapping":
 		if e.complexity.TransformOptions.ReasoningEffortMapping == nil {
 			break
@@ -23154,6 +23168,8 @@ func (ec *executionContext) fieldContext_Channel_disabledAPIKeys(_ context.Conte
 				return ec.fieldContext_DisabledAPIKey_reason(ctx, field)
 			case "expiresAt":
 				return ec.fieldContext_DisabledAPIKey_expiresAt(ctx, field)
+			case "quotaDisabled":
+				return ec.fieldContext_DisabledAPIKey_quotaDisabled(ctx, field)
 			}
 			return nil, fmt.Errorf("no field named %q was found under type DisabledAPIKey", field.Name)
 		},
@@ -27150,6 +27166,8 @@ func (ec *executionContext) fieldContext_ChannelSettings_transformOptions(_ cont
 				return ec.fieldContext_TransformOptions_forceArrayInstructions(ctx, field)
 			case "forceArrayInputs":
 				return ec.fieldContext_TransformOptions_forceArrayInputs(ctx, field)
+			case "forceArrayStop":
+				return ec.fieldContext_TransformOptions_forceArrayStop(ctx, field)
 			case "replaceDeveloperRoleWithSystem":
 				return ec.fieldContext_TransformOptions_replaceDeveloperRoleWithSystem(ctx, field)
 			case "reasoningEffortMapping":
@@ -30852,6 +30870,35 @@ func (ec *executionContext) fieldContext_DisabledAPIKey_expiresAt(_ context.Cont
 		IsResolver: false,
 		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
 			return nil, errors.New("field of type Time does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
+func (ec *executionContext) _DisabledAPIKey_quotaDisabled(ctx context.Context, field graphql.CollectedField, obj *objects.DisabledAPIKey) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_DisabledAPIKey_quotaDisabled,
+		func(ctx context.Context) (any, error) {
+			return obj.QuotaDisabled, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_DisabledAPIKey_quotaDisabled(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "DisabledAPIKey",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
 		},
 	}
 	return fc, nil
@@ -64919,6 +64966,35 @@ func (ec *executionContext) fieldContext_TransformOptions_forceArrayInputs(_ con
 	return fc, nil
 }
 
+func (ec *executionContext) _TransformOptions_forceArrayStop(ctx context.Context, field graphql.CollectedField, obj *objects.TransformOptions) (ret graphql.Marshaler) {
+	return graphql.ResolveField(
+		ctx,
+		ec.OperationContext,
+		field,
+		ec.fieldContext_TransformOptions_forceArrayStop,
+		func(ctx context.Context) (any, error) {
+			return obj.ForceArrayStop, nil
+		},
+		nil,
+		ec.marshalNBoolean2bool,
+		true,
+		true,
+	)
+}
+
+func (ec *executionContext) fieldContext_TransformOptions_forceArrayStop(_ context.Context, field graphql.CollectedField) (fc *graphql.FieldContext, err error) {
+	fc = &graphql.FieldContext{
+		Object:     "TransformOptions",
+		Field:      field,
+		IsMethod:   false,
+		IsResolver: false,
+		Child: func(ctx context.Context, field graphql.CollectedField) (*graphql.FieldContext, error) {
+			return nil, errors.New("field of type Boolean does not have child fields")
+		},
+	}
+	return fc, nil
+}
+
 func (ec *executionContext) _TransformOptions_replaceDeveloperRoleWithSystem(ctx context.Context, field graphql.CollectedField, obj *objects.TransformOptions) (ret graphql.Marshaler) {
 	return graphql.ResolveField(
 		ctx,
@@ -92079,7 +92155,7 @@ func (ec *executionContext) unmarshalInputTransformOptionsInput(ctx context.Cont
 		asMap[k] = v
 	}
 
-	fieldsInOrder := [...]string{"forceArrayInstructions", "forceArrayInputs", "replaceDeveloperRoleWithSystem", "reasoningEffortMapping"}
+	fieldsInOrder := [...]string{"forceArrayInstructions", "forceArrayInputs", "forceArrayStop", "replaceDeveloperRoleWithSystem", "reasoningEffortMapping"}
 	for _, k := range fieldsInOrder {
 		v, ok := asMap[k]
 		if !ok {
@@ -92100,6 +92176,13 @@ func (ec *executionContext) unmarshalInputTransformOptionsInput(ctx context.Cont
 				return it, err
 			}
 			it.ForceArrayInputs = data
+		case "forceArrayStop":
+			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("forceArrayStop"))
+			data, err := ec.unmarshalOBoolean2bool(ctx, v)
+			if err != nil {
+				return it, err
+			}
+			it.ForceArrayStop = data
 		case "replaceDeveloperRoleWithSystem":
 			ctx := graphql.WithPathContext(ctx, graphql.NewPathWithField("replaceDeveloperRoleWithSystem"))
 			data, err := ec.unmarshalOBoolean2bool(ctx, v)
@@ -104884,6 +104967,11 @@ func (ec *executionContext) _DisabledAPIKey(ctx context.Context, sel ast.Selecti
 			out.Values[i] = ec._DisabledAPIKey_reason(ctx, field, obj)
 		case "expiresAt":
 			out.Values[i] = ec._DisabledAPIKey_expiresAt(ctx, field, obj)
+		case "quotaDisabled":
+			out.Values[i] = ec._DisabledAPIKey_quotaDisabled(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
 		default:
 			panic("unknown field " + strconv.Quote(field.Name))
 		}
@@ -118448,6 +118536,11 @@ func (ec *executionContext) _TransformOptions(ctx context.Context, sel ast.Selec
 			}
 		case "forceArrayInputs":
 			out.Values[i] = ec._TransformOptions_forceArrayInputs(ctx, field, obj)
+			if out.Values[i] == graphql.Null {
+				out.Invalids++
+			}
+		case "forceArrayStop":
+			out.Values[i] = ec._TransformOptions_forceArrayStop(ctx, field, obj)
 			if out.Values[i] == graphql.Null {
 				out.Invalids++
 			}

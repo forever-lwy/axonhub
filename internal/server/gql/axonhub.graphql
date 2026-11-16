@@ -60,6 +60,7 @@ type ReasoningEffortMapping {
 type TransformOptions {
   forceArrayInstructions: Boolean!
   forceArrayInputs: Boolean!
+  forceArrayStop: Boolean!
   replaceDeveloperRoleWithSystem: Boolean!
   reasoningEffortMapping: [ReasoningEffortMapping!]
 }
@@ -78,6 +79,7 @@ input ReasoningEffortMappingInput {
 input TransformOptionsInput {
   forceArrayInstructions: Boolean
   forceArrayInputs: Boolean
+  forceArrayStop: Boolean
   replaceDeveloperRoleWithSystem: Boolean
   reasoningEffortMapping: [ReasoningEffortMappingInput!]
 }
@@ -381,6 +383,11 @@ type DisabledAPIKey {
   errorCode: Int!
   reason: String
   expiresAt: Time
+  """
+  True when a proactive provider quota observation owns this disable, which
+  means a later quota check may clear it once the key reports recovery.
+  """
+  quotaDisabled: Boolean!
 }
 
 type OAuthCredentials {

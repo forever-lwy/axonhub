@@ -179,6 +179,21 @@ func MessageFromLLM(m llm.Message) Message {
 	return MessageFromLLMWithConfig(m, ReasoningFieldAll)
 }
 
+// IsCodexBootstrapToolName reports whether name is a standalone tool-output
+// notification emitted by Codex Desktop's turn/start or companion-page flows.
+func IsCodexBootstrapToolName(name string) bool {
+	if strings.HasPrefix(name, "codex_apps_") {
+		return true
+	}
+
+	switch name {
+	case "create_thread", "send_message_to_thread", "automation_update":
+		return true
+	default:
+		return false
+	}
+}
+
 // MessageFromLLMWithConfig creates OpenAI Message from unified llm.Message with reasoning field configuration.
 func MessageFromLLMWithConfig(m llm.Message, reasoningField ReasoningField) Message {
 	var reasoningContent, reasoning *string
@@ -227,6 +242,14 @@ func MessageFromLLMWithConfig(m llm.Message, reasoningField ReasoningField) Mess
 		ToolCallID:       m.ToolCallID,
 		ReasoningContent: reasoningContent,
 		Reasoning:        reasoning,
+	}
+
+	// Codex Desktop uses standalone named outputs as turn bootstrap messages.
+	// Chat Completions cannot represent them as tool messages without a call ID.
+	if msg.Role == "tool" && strings.TrimSpace(lo.FromPtr(msg.ToolCallID)) == "" &&
+		IsCodexBootstrapToolName(lo.FromPtr(m.ToolCallName)) {
+		msg.Role = "user"
+		msg.ToolCallID = nil
 	}
 
 	if m.Audio != nil {
@@ -494,11 +517,24 @@ func (r *Response) ToLLMResponse() *llm.Response {
 	return resp
 }
 
+// normalizeUpstreamFinishReason maps OpenAI-compatible provider aliases at the
+// upstream decode boundary. Zai/Zhipu use the word "sensitive" for a moderation
+// block; downstream code only knows the standard "content_filter" terminal.
+func normalizeUpstreamFinishReason(reason *string) *string {
+	if reason == nil || *reason != "sensitive" {
+		return reason
+	}
+
+	normalized := "content_filter"
+
+	return &normalized
+}
+
 // ToLLMChoice converts OpenAI Choice to unified llm.Choice.
 func (c Choice) ToLLMChoice() llm.Choice {
 	choice := llm.Choice{
 		Index:        c.Index,
-		FinishReason: c.FinishReason,
+		FinishReason: normalizeUpstreamFinishReason(c.FinishReason),
 	}
 
 	if c.Message != nil {

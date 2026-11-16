@@ -277,9 +277,12 @@ func (t *OutboundTransformer) TransformRequest(ctx context.Context, llmReq *llm.
 		}
 	}
 
+	input := convertInputFromMessages(llmReq.Messages, llmReq.TransformOptions)
+	input = ensureJSONObjectKeyword(input, llmReq.ResponseFormat)
+
 	payload := Request{
 		Model:                llmReq.Model,
-		Input:                convertInputFromMessages(llmReq.Messages, llmReq.TransformOptions),
+		Input:                input,
 		Instructions:         convertInstructionsFromMessages(llmReq.Messages),
 		Tools:                tools,
 		ParallelToolCalls:    llmReq.ParallelToolCalls,
@@ -452,19 +455,31 @@ func (t *OutboundTransformer) transformStandardResponse(
 		Message: &msg,
 	}
 
-	if len(msg.ToolCalls) > 0 {
-		choice.FinishReason = lo.ToPtr("tool_calls")
-	} else if resp.Status != nil {
+	// Abnormal terminal statuses take priority over tool calls: a truncated,
+	// failed or cancelled response may carry partial tool calls, and reporting
+	// "tool_calls" would make clients execute incomplete arguments. This
+	// matches the streaming path.
+	if resp.Status != nil {
 		switch *resp.Status {
 		case "completed":
 			choice.FinishReason = lo.ToPtr("stop")
 		case "failed":
 			choice.FinishReason = lo.ToPtr("error")
 		case "incomplete":
-			choice.FinishReason = lo.ToPtr("length")
+			// Distinguish truncation from content-filter rejection, matching the
+			// streaming path.
+			if resp.IncompleteDetails != nil && resp.IncompleteDetails.Reason == "content_filter" {
+				choice.FinishReason = lo.ToPtr("content_filter")
+			} else {
+				choice.FinishReason = lo.ToPtr("length")
+			}
 		case "canceled", "cancelled":
 			choice.FinishReason = lo.ToPtr("cancelled")
 		}
+	}
+
+	if len(msg.ToolCalls) > 0 && (choice.FinishReason == nil || *choice.FinishReason == "stop") {
+		choice.FinishReason = lo.ToPtr("tool_calls")
 	}
 
 	llmResp.Choices = append(llmResp.Choices, choice)

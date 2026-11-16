@@ -112,6 +112,12 @@ type TransformOptions struct {
 	// ForceArrayInputs forces the channel to accept array format for inputs.
 	ForceArrayInputs bool `json:"forceArrayInputs"`
 
+	// ForceArrayStop forces the outbound stop field to always be an array.
+	// OpenAI allows both "stop": "x" and "stop": ["x"], but some strict
+	// OpenAI-compatible upstreams only accept the array form and reject a
+	// plain string with HTTP 400.
+	ForceArrayStop bool `json:"forceArrayStop"`
+
 	// ReplaceDeveloperRoleWithSystem replaces developer role with system in messages for Bailian compatibility.
 	ReplaceDeveloperRoleWithSystem bool `json:"replaceDeveloperRoleWithSystem"`
 
@@ -465,6 +471,14 @@ type DisabledAPIKey struct {
 	ErrorCode  int        `json:"errorCode"`
 	Reason     string     `json:"reason,omitempty"`
 	ExpiresAt  *time.Time `json:"expiresAt,omitempty"`
+
+	// QuotaDisabled marks a disable owned by a proactive provider quota
+	// observation rather than by a manual action, a plugin or an HTTP error
+	// rule. Only records with this flag are reconciled by quota checks;
+	// missing/false — including every record written before the field existed
+	// — means the channel lifecycle owns the record. Ownership is never
+	// inferred from the reason text, the error code or the expiry.
+	QuotaDisabled bool `json:"quotaDisabled,omitempty"`
 }
 
 // IsExpired reports whether a temporary API key disable has elapsed.

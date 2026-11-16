@@ -15,9 +15,11 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/auth"
 	"github.com/looplj/axonhub/llm/httpclient"
 	"github.com/looplj/axonhub/llm/transformer/shared"
@@ -265,7 +267,18 @@ func TestWebSocketExecutorDoReturnsErrorForTopLevelErrorEvent(t *testing.T) {
 	})
 
 	require.Nil(t, resp)
-	require.ErrorContains(t, err, "bad_request: invalid websocket request")
+
+	var httpErr *httpclient.Error
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, http.StatusBadGateway, httpErr.StatusCode)
+	require.True(t, httpclient.IsHTTPStatusCodeRetryable(httpErr.StatusCode))
+	require.JSONEq(t, `{
+		"error":{
+			"type":"bad_request",
+			"code":"bad_request",
+			"message":"invalid websocket request"
+		}
+	}`, string(httpErr.Body))
 }
 
 func TestTopLevelWebSocketErrorPreservesOfficialErrorStatusAndBody(t *testing.T) {
@@ -345,7 +358,119 @@ func TestTopLevelWebSocketErrorPreservesOfficialErrorStatusAndBody(t *testing.T)
 			var httpErr *httpclient.Error
 			require.ErrorAs(t, err, &httpErr)
 			require.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
+			require.False(t, httpclient.IsHTTPStatusCodeRetryable(httpErr.StatusCode))
 			require.JSONEq(t, tt.want, string(httpErr.Body))
+		})
+	}
+}
+
+func TestTopLevelWebSocketErrorReportsProviderFailure(t *testing.T) {
+	tests := []struct {
+		name        string
+		data        string
+		wantStatus  int
+		wantBody    string
+		wantContain []string
+	}{
+		{
+			name:       "string status and numeric code decode leniently",
+			data:       `{"type":"error","status":"503","code":503,"message":"upstream overloaded"}`,
+			wantStatus: http.StatusServiceUnavailable,
+			wantBody: `{
+				"error":{
+					"type":"upstream_error",
+					"code":"503",
+					"message":"upstream overloaded"
+				}
+			}`,
+		},
+		{
+			name:       "fractional status is not a usable status",
+			data:       `{"type":"error","status":400.9,"message":"fractional status"}`,
+			wantStatus: http.StatusBadGateway,
+			wantBody: `{
+				"error":{
+					"type":"upstream_error",
+					"message":"fractional status"
+				}
+			}`,
+		},
+		{
+			name:       "status-less frame keeps code and message",
+			data:       `{"type":"error","code":"server_error","message":"upstream failed"}`,
+			wantStatus: http.StatusBadGateway,
+			wantBody: `{
+				"error":{
+					"type":"server_error",
+					"code":"server_error",
+					"message":"upstream failed"
+				}
+			}`,
+		},
+		{
+			name:       "nested-only frame keeps nested detail",
+			data:       `{"type":"error","error":{"type":"server_error","code":"overloaded","message":"try later"}}`,
+			wantStatus: http.StatusBadGateway,
+			wantBody: `{
+				"error":{
+					"type":"server_error",
+					"code":"overloaded",
+					"message":"try later"
+				}
+			}`,
+		},
+		{
+			name:       "nested symbolic code supplies the type",
+			data:       `{"type":"error","error":{"code":"server_error","message":"try later"}}`,
+			wantStatus: http.StatusBadGateway,
+			wantBody: `{
+				"error":{
+					"type":"server_error",
+					"code":"server_error",
+					"message":"try later"
+				}
+			}`,
+		},
+		{
+			name:        "empty nested detail falls back to the raw frame",
+			data:        `{"type":"error","error":{"type":"server_error","code":"","message":""}}`,
+			wantStatus:  http.StatusBadGateway,
+			wantContain: []string{`"type":"server_error"`, `"message":"websocket error event: {\"type\":\"error\"`},
+		},
+		{
+			name:        "frame without detail falls back to the raw frame",
+			data:        `{"type":"error"}`,
+			wantStatus:  http.StatusBadGateway,
+			wantContain: []string{`"type":"upstream_error"`, `websocket error event: {\"type\":\"error\"}`},
+		},
+		{
+			name:        "malformed frame keeps the decode error and raw frame",
+			data:        `{"type":"error",`,
+			wantStatus:  http.StatusBadGateway,
+			wantContain: []string{`"type":"upstream_error"`, `failed to decode error frame`, `{\"type\":\"error\",`},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := TopLevelWebSocketError([]*httpclient.StreamEvent{{
+				Type: "error",
+				Data: []byte(tt.data),
+			}})
+
+			var httpErr *httpclient.Error
+			require.ErrorAs(t, err, &httpErr)
+			require.Equal(t, tt.wantStatus, httpErr.StatusCode)
+			require.True(t, httpclient.IsHTTPStatusCodeRetryable(httpErr.StatusCode),
+				"an unclassified upstream error frame must be retryable")
+
+			if tt.wantBody != "" {
+				require.JSONEq(t, tt.wantBody, string(httpErr.Body))
+			}
+
+			for _, want := range tt.wantContain {
+				require.Contains(t, string(httpErr.Body), want)
+			}
 		})
 	}
 }
@@ -771,6 +896,140 @@ func TestPrepareWebSocketPayloadChecksExplicitPreviousIDWithEmptyCachedInput(t *
 
 	err := prepareWebSocketPayloadForLease(payload, lease)
 	require.ErrorIs(t, err, shared.ErrResponsesContinuationUnavailable)
+}
+
+// TestPrepareWebSocketPayloadKeepsJSONObjectReminderStable pins the review
+// finding on #3004: the json_object reminder must keep the same position on
+// every turn, or the input prefix check rejects reuse and the next turn opens
+// a new WebSocket with the full history.
+func TestPrepareWebSocketPayloadKeepsJSONObjectReminderStable(t *testing.T) {
+	transformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	systemMessage := llm.Message{
+		Role:    "system",
+		Content: llm.MessageContent{Content: lo.ToPtr("Return a json object.")},
+	}
+	userMessage := func(text string) llm.Message {
+		return llm.Message{
+			Role:    "user",
+			Content: llm.MessageContent{Content: lo.ToPtr(text)},
+		}
+	}
+	assistantMessage := llm.Message{
+		Role:    "assistant",
+		Content: llm.MessageContent{Content: lo.ToPtr(`{"name":"Ada"}`)},
+	}
+
+	payloadFor := func(msgs []llm.Message) map[string]any {
+		hreq, err := transformer.TransformRequest(context.Background(), &llm.Request{
+			Model:          "gpt-5",
+			ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+			Messages:       msgs,
+		})
+		require.NoError(t, err)
+
+		payload, err := buildWebSocketCreatePayload(hreq.Body)
+		require.NoError(t, err)
+
+		return payload
+	}
+
+	firstPayload := payloadFor([]llm.Message{systemMessage, userMessage("Ada Lovelace, 36")})
+
+	pooled := &pooledWebSocketConn{}
+	firstLease := &webSocketLease{pooled: pooled}
+	require.NoError(t, prepareWebSocketPayloadForLease(firstPayload, firstLease))
+
+	output := make([]json.RawMessage, 0)
+	for _, item := range convertAssistantMessage(assistantMessage) {
+		raw, err := json.Marshal(item)
+		require.NoError(t, err)
+
+		output = append(output, raw)
+	}
+
+	require.True(t, firstLease.rememberTurn("resp_1", output))
+
+	secondPayload := payloadFor([]llm.Message{
+		systemMessage, userMessage("Ada Lovelace, 36"), assistantMessage, userMessage("Lovelace, 36"),
+	})
+	secondLease := &webSocketLease{pooled: pooled, reused: true}
+	require.NoError(t, prepareWebSocketPayloadForLease(secondPayload, secondLease))
+
+	input, ok, err := payloadInputItems(secondPayload)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	require.Contains(t, string(input[0]), "Lovelace, 36")
+	require.Equal(t, "resp_1", secondPayload["previous_response_id"])
+}
+
+// regression for #3005: an assistant response that contains "json" (for
+// example explanatory prose alongside JSON output) must not suppress the
+// json_object reminder on the next turn, or the saved input stops being a
+// prefix of the new one and the pooled WebSocket executor rejects reuse.
+func TestPrepareWebSocketPayloadKeepsJSONObjectReminderStableAfterAssistantMentionsJSON(t *testing.T) {
+	transformer, err := NewOutboundTransformer("https://api.openai.com", "test-api-key")
+	require.NoError(t, err)
+
+	systemMessage := llm.Message{
+		Role:    "system",
+		Content: llm.MessageContent{Content: lo.ToPtr("Return a json object.")},
+	}
+	userMessage := func(text string) llm.Message {
+		return llm.Message{
+			Role:    "user",
+			Content: llm.MessageContent{Content: lo.ToPtr(text)},
+		}
+	}
+	assistantMessage := llm.Message{
+		Role:    "assistant",
+		Content: llm.MessageContent{Content: lo.ToPtr(`Here is the JSON: {"name":"Ada"}`)},
+	}
+
+	payloadFor := func(msgs []llm.Message) map[string]any {
+		hreq, err := transformer.TransformRequest(context.Background(), &llm.Request{
+			Model:          "gpt-5",
+			ResponseFormat: &llm.ResponseFormat{Type: "json_object"},
+			Messages:       msgs,
+		})
+		require.NoError(t, err)
+
+		payload, err := buildWebSocketCreatePayload(hreq.Body)
+		require.NoError(t, err)
+
+		return payload
+	}
+
+	firstPayload := payloadFor([]llm.Message{systemMessage, userMessage("Ada Lovelace, 36")})
+
+	pooled := &pooledWebSocketConn{}
+	firstLease := &webSocketLease{pooled: pooled}
+	require.NoError(t, prepareWebSocketPayloadForLease(firstPayload, firstLease))
+
+	output := make([]json.RawMessage, 0)
+	for _, item := range convertAssistantMessage(assistantMessage) {
+		raw, err := json.Marshal(item)
+		require.NoError(t, err)
+
+		output = append(output, raw)
+	}
+
+	require.True(t, firstLease.rememberTurn("resp_1", output))
+
+	secondPayload := payloadFor([]llm.Message{
+		systemMessage, userMessage("Ada Lovelace, 36"), assistantMessage, userMessage("Lovelace, 36"),
+	})
+	secondLease := &webSocketLease{pooled: pooled, reused: true}
+	require.NoError(t, prepareWebSocketPayloadForLease(secondPayload, secondLease))
+
+	input, ok, err := payloadInputItems(secondPayload)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, input, 1)
+	require.Contains(t, string(input[0]), "Lovelace, 36")
+	require.Equal(t, "resp_1", secondPayload["previous_response_id"])
 }
 
 func TestRestorePayloadMapRestoresMutatedPayload(t *testing.T) {
