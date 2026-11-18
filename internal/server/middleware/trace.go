@@ -1,9 +1,6 @@
 package middleware
 
 import (
-	"bytes"
-	"fmt"
-	"io"
 	"net/http"
 	"strings"
 
@@ -53,12 +50,10 @@ func tryGetTraceIDFromBody(c *gin.Context, config tracing.Config) (string, error
 		return "", nil
 	}
 
-	body, err := io.ReadAll(c.Request.Body)
+	body, err := readTraceBody(c)
 	if err != nil {
-		return "", fmt.Errorf("failed to read request body: %w", err)
+		return "", err
 	}
-
-	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	if len(body) == 0 {
 		return "", nil
 	}
@@ -185,12 +180,10 @@ func tryExtractTraceIDFromClaudeCodeRequest(c *gin.Context, config tracing.Confi
 		return "", nil
 	}
 
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	bodyBytes, err := readTraceBody(c)
 	if err != nil {
-		return "", fmt.Errorf("failed to read request body: %w", err)
+		return "", err
 	}
-
-	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 	if len(bodyBytes) == 0 {
 		return "", nil
 	}

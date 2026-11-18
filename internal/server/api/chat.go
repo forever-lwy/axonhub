@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -75,13 +74,9 @@ func (handlers *ChatCompletionHandlers) WithStreamWriter(writer StreamWriter) *C
 }
 
 func (handlers *ChatCompletionHandlers) ChatCompletion(c *gin.Context) {
-	ctx := c.Request.Context()
-
-	// Use ReadHTTPRequest to parse the request
-	genericReq, err := httpclient.ReadHTTPRequest(c.Request)
+	genericReq, err := readModelRequest(c)
 	if err != nil {
-		httpErr := handlers.ChatCompletionOrchestrator.Inbound.TransformError(ctx, err)
-		c.JSON(httpErr.StatusCode, json.RawMessage(httpErr.Body))
+		writeModelReadError(c, err, handlers.ChatCompletionOrchestrator)
 
 		return
 	}

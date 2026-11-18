@@ -37,6 +37,12 @@ flowchart TD
 
 ## Stage Overview
 
+### Request body size
+
+LLM HTTP endpoints accept up to 128 MiB by default. Inline images count at their Base64-encoded size. Both the wire size and the decompressed size must fit within the limit.
+
+Set `server.max_request_body_size` or the `AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE` environment variable to a size such as `256M`, then restart AxonHub. Oversized requests return HTTP 413 with the limit. The project's request list shows a failed request with a diagnostic placeholder explaining why the body was omitted.
+
 ### Upstream timeouts
 
 Configure these server settings in the YAML configuration (values are durations):

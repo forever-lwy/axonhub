@@ -46,6 +46,8 @@ server:
     opencode_trace_enabled: true # Enable extracting trace IDs from OpenCode session headers (env: AXONHUB_SERVER_TRACE_OPENCODE_TRACE_ENABLED)
   debug: false                  # Enable debug mode (env: AXONHUB_SERVER_DEBUG)
   disable_ssl_verify: false     # Disable SSL certificate verification for self-signed certificates (env: AXONHUB_SERVER_DISABLE_SSL_VERIFY)
+  # Maximum LLM HTTP request size before and after decompression, in bytes or K/M/G.
+  max_request_body_size: "128M" # env: AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE
   # Max multipart form memory for large uploads (e.g. backup restore).
   # Accepts plain bytes or K/M/G suffixes: "32M", "512MB", "1G", "536870912".
   # Default: "32M" (env: AXONHUB_SERVER_MAX_MULTIPART_MEMORY)

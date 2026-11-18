@@ -440,14 +440,11 @@ func (s *RequestService) CreateRequest(
 		chunked = PrepareChunkedRequestBody(stripJSONNul(requestBodyBytes))
 	}
 	var req *ent.Request
-	var traceID int
 	create := func(ctx context.Context) error {
 		client := s.entFromContext(ctx)
-		mut := client.Request.Create().
-			SetProjectID(projectID).
+		mut := s.newProjectRequest(ctx, projectID).
 			SetModelID(llmRequest.Model).
 			SetFormat(string(format)).
-			SetSource(contexts.GetSourceOrDefault(ctx, request.SourceAPI)).
 			SetStatus(request.StatusProcessing).
 			SetStream(isStream).
 			SetRequestHeaders(requestHeadersBytes)
@@ -473,21 +470,6 @@ func (s *RequestService) CreateRequest(
 
 		if dataStorage != nil {
 			mut = mut.SetDataStorageID(dataStorage.ID)
-		}
-
-		if apiKey, ok := contexts.GetAPIKey(ctx); ok && apiKey != nil {
-			mut = mut.SetAPIKeyID(apiKey.ID)
-		}
-
-		if trace, ok := contexts.GetTrace(ctx); ok && trace != nil {
-			traceID = trace.ID
-			mut = mut.SetTraceID(traceID)
-		}
-
-		if contexts.GetSourceOrDefault(ctx, request.SourceAPI) == request.SourcePlayground {
-			if user, ok := contexts.GetUser(ctx); ok && user != nil {
-				mut = mut.SetUserID(user.ID)
-			}
 		}
 
 		// Create request
@@ -537,26 +519,63 @@ func (s *RequestService) CreateRequest(
 		}
 	}
 
+	s.requestCreated(ctx, req)
+	return req, nil
+}
+
+func (s *RequestService) newProjectRequest(ctx context.Context, projectID int) *ent.RequestCreate {
+	source := contexts.GetSourceOrDefault(ctx, request.SourceAPI)
+	mut := s.entFromContext(ctx).Request.Create().SetProjectID(projectID).SetSource(source)
+	if key, ok := contexts.GetAPIKey(ctx); ok && key != nil {
+		mut.SetAPIKeyID(key.ID)
+	}
+	if tr, ok := contexts.GetTrace(ctx); ok && tr != nil {
+		mut.SetTraceID(tr.ID)
+	}
+	if source == request.SourcePlayground {
+		if user, ok := contexts.GetUser(ctx); ok && user != nil {
+			mut.SetUserID(user.ID)
+		}
+	}
+	return mut
+}
+
+// RecordRejectedRequest writes one terminal row for a request rejected before routing.
+// The placeholder contains gateway diagnostics only. There is no channel execution.
+func (s *RequestService) RecordRejectedRequest(ctx context.Context, model string, format llm.APIFormat, stream bool, placeholder objects.JSONRawMessage) error {
+	projectID, ok := contexts.GetProjectID(ctx)
+	if !ok || projectID <= 0 {
+		return nil
+	}
+	req, err := s.newProjectRequest(ctx, projectID).
+		SetModelID(model).SetFormat(string(format)).SetStream(stream).
+		SetStatus(request.StatusFailed).SetRequestBody(placeholder).Save(ctx)
+	if err != nil {
+		return fmt.Errorf("record rejected request: %w", err)
+	}
+	s.requestCreated(ctx, req)
+	return nil
+}
+
+func (s *RequestService) requestCreated(ctx context.Context, req *ent.Request) {
 	// Keep the trace's last request time monotonic: concurrent requests may
 	// reach this point out of order, and the older one must not overwrite the
 	// newer timestamp.
-	if traceID != 0 {
+	if req.TraceID != 0 {
 		err := authz.RunWithSystemBypassVoid(ctx, "trace-last-request-at", func(bypassCtx context.Context) error {
 			return s.entFromContext(ctx).Trace.Update().
-				Where(trace.ID(traceID), trace.LastRequestAtLT(req.CreatedAt)).
+				Where(trace.ID(req.TraceID), trace.LastRequestAtLT(req.CreatedAt)).
 				SetLastRequestAt(req.CreatedAt).
 				Exec(bypassCtx)
 		})
 		if err != nil {
-			log.Warn(ctx, "Failed to update trace last request time", log.Cause(err), log.Int("trace_id", traceID))
+			log.Warn(ctx, "Failed to update trace last request time", log.Cause(err), log.Int("trace_id", req.TraceID))
 		}
 	}
 
 	// Let the downstream response-header middleware associate the eventual
 	// HTTP response with this persisted request row.
 	contexts.NotifyRequestRecord(ctx, req.ID)
-
-	return req, nil
 }
 
 // CreateRequestExecution creates a new request execution record.

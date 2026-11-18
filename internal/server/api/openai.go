@@ -421,10 +421,9 @@ func (handlers *OpenAIHandlers) CreateDecisions(c *gin.Context) {
 func (handlers *OpenAIHandlers) CreateSpeech(c *gin.Context) {
 	ctx := c.Request.Context()
 
-	genericReq, err := httpclient.ReadHTTPRequest(c.Request)
+	genericReq, err := readModelRequest(c)
 	if err != nil {
-		httpErr := handlers.SpeechHandlers.ChatCompletionOrchestrator.Inbound.TransformError(ctx, err)
-		c.JSON(httpErr.StatusCode, json.RawMessage(httpErr.Body))
+		writeModelReadError(c, err, handlers.SpeechHandlers.ChatCompletionOrchestrator)
 		return
 	}
 
@@ -494,10 +493,9 @@ func (handlers *OpenAIHandlers) CreateVideo(c *gin.Context) {
 	defer cancel()
 	ctx := c.Request.Context()
 
-	genericReq, err := httpclient.ReadHTTPRequest(c.Request)
+	genericReq, err := readModelRequest(c)
 	if err != nil {
-		httpErr := handlers.VideoHandlers.ChatCompletionOrchestrator.Inbound.TransformError(ctx, err)
-		c.JSON(httpErr.StatusCode, json.RawMessage(httpErr.Body))
+		writeModelReadError(c, err, handlers.VideoHandlers.ChatCompletionOrchestrator)
 		return
 	}
 
