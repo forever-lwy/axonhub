@@ -71,8 +71,21 @@ type Server struct {
 
 	Config   Config
 	server   *http.Server
-	addr     string
 	lifetime *lifecycle.Manager
+}
+
+func (srv *Server) newHTTPServer() *http.Server {
+	var protocols http.Protocols
+	protocols.SetHTTP1(true)
+	protocols.SetUnencryptedHTTP2(true)
+
+	return &http.Server{
+		Addr:         listenAddr(srv.Config.Host, srv.Config.Port),
+		Handler:      srv.Engine,
+		Protocols:    &protocols,
+		ReadTimeout:  srv.Config.ReadTimeout,
+		WriteTimeout: srv.Config.writeTimeout(),
+	}
 }
 
 func (srv *Server) Run() error {
@@ -81,14 +94,7 @@ func (srv *Server) Run() error {
 		log.String("host", srv.Config.Host),
 		log.Int("port", srv.Config.Port),
 	)
-	addr := listenAddr(srv.Config.Host, srv.Config.Port)
-	srv.server = &http.Server{
-		Addr:         addr,
-		Handler:      srv.Engine,
-		ReadTimeout:  srv.Config.ReadTimeout,
-		WriteTimeout: srv.Config.writeTimeout(),
-	}
-	srv.addr = addr
+	srv.server = srv.newHTTPServer()
 
 	err := srv.server.ListenAndServe()
 	if err != nil {
