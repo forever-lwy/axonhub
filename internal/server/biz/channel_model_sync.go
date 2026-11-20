@@ -15,7 +15,7 @@ import (
 
 // syncChannelModels syncs supported models for all channels with auto_sync_supported_models enabled.
 // This function is called periodically (every hour) to keep model lists up to date.
-func (svc *ChannelService) syncChannelModels(ctx context.Context) bool {
+func (svc *ChannelService) syncChannelModels(ctx context.Context) {
 	// Query all enabled channels with auto_sync_supported_models = true
 	channels, err := svc.entFromContext(ctx).Channel.
 		Query().
@@ -26,12 +26,12 @@ func (svc *ChannelService) syncChannelModels(ctx context.Context) bool {
 		All(ctx)
 	if err != nil {
 		log.Error(ctx, "failed to query channels for model sync", log.Cause(err))
-		return true
+		return
 	}
 
 	if len(channels) == 0 {
 		log.Debug(ctx, "no channels with auto_sync_supported_models enabled")
-		return false
+		return
 	}
 
 	log.Info(ctx, "starting model sync for channels", log.Int("count", len(channels)))
@@ -65,7 +65,6 @@ func (svc *ChannelService) syncChannelModels(ctx context.Context) bool {
 		log.Int("success", successCount),
 		log.Int("failure", failureCount),
 		log.Int("changed", changedCount))
-	return true
 }
 
 // syncChannelModelsForChannel syncs supported models for a single channel.

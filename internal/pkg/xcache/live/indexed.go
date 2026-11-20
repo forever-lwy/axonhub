@@ -104,7 +104,6 @@ type IndexedOptions[K comparable, V any] struct {
 	// RefreshInterval for periodic incremental refresh (compensation mechanism).
 	// Must be greater than zero.
 	RefreshInterval time.Duration
-	OnDemand        bool
 
 	// DebounceDelay is applied to on-demand reload signals (Watcher-triggered reload).
 	// Defaults to the same value as live.Cache (500ms) when not set.
@@ -137,9 +136,6 @@ func NewIndexedCache[K comparable, V any](opts IndexedOptions[K, V]) *IndexedCac
 		panic("live.IndexedCache: LoadSinceFunc is required")
 	}
 
-	if opts.OnDemand && (opts.TTL <= 0 || opts.TTL > opts.RefreshInterval) {
-		opts.TTL = opts.RefreshInterval
-	}
 	ic := &IndexedCache[K, V]{
 		index:  make(map[K]*cacheItem[V]),
 		epochs: make(map[K]uint64),
@@ -173,8 +169,6 @@ func NewIndexedCache[K comparable, V any](opts IndexedOptions[K, V]) *IndexedCac
 		Name:            opts.Name + "_refresh",
 		RefreshFunc:     refreshFunc,
 		RefreshInterval: opts.RefreshInterval,
-		OnDemand:        opts.OnDemand,
-		idleMaintenance: ic.CleanupExpired,
 		DebounceDelay:   opts.DebounceDelay,
 	})
 

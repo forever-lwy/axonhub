@@ -68,7 +68,6 @@ func NewPromptProtectionRuleService(params PromptProtectionRuleServiceParams) *P
 	svc.promptProtectionRuleNotifier = notifier
 	svc.enabledRulesCache = live.NewCache(live.Options[[]*ent.PromptProtectionRule]{
 		Name:            "axonhub:enabled_prompt_protection_rules",
-		OnDemand:        params.CacheConfig.OnDemand,
 		InitialValue:    []*ent.PromptProtectionRule{},
 		RefreshInterval: 30 * time.Second,
 		DebounceDelay:   500 * time.Millisecond,
@@ -184,8 +183,7 @@ func (svc *PromptProtectionRuleService) Stop() {
 }
 
 func (svc *PromptProtectionRuleService) onEnabledRulesRefreshed(ctx context.Context, _ []*ent.PromptProtectionRule, lastUpdate time.Time) ([]*ent.PromptProtectionRule, time.Time, bool, error) {
-	// A request can trigger a refresh. Only committed rows belong in the shared cache.
-	client := svc.db
+	client := svc.entFromContext(ctx)
 	rules, err := authz.RunAsHost(ctx, client, "prompt-protection-rule-cache", func(hostCtx context.Context) ([]*ent.PromptProtectionRule, error) {
 		return client.PromptProtectionRule.Query().
 			Where(promptprotectionrule.StatusEQ(promptprotectionrule.StatusEnabled)).
@@ -356,9 +354,6 @@ func (svc *PromptProtectionRuleService) BulkEnableRules(ctx context.Context, ids
 
 func (svc *PromptProtectionRuleService) ListEnabledRules(ctx context.Context) ([]*ent.PromptProtectionRule, error) {
 	if svc.enabledRulesCache != nil {
-		if err := svc.enabledRulesCache.RefreshIfStale(ctx); err != nil {
-			return nil, err
-		}
 		return svc.enabledRulesCache.GetData(), nil
 	}
 

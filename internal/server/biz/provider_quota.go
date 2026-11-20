@@ -19,7 +19,6 @@ import (
 	"github.com/looplj/axonhub/internal/ent/providerquotastatus"
 	"github.com/looplj/axonhub/internal/ent/schema/schematype"
 	"github.com/looplj/axonhub/internal/log"
-	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/server/biz/provider_quota"
 	"github.com/looplj/axonhub/internal/server/scheduler"
 	"github.com/looplj/axonhub/llm/httpclient"
@@ -365,7 +364,6 @@ func (s *QuotaChannelStatus) EffectiveStatus(limitType provider_quota.QuotaLimit
 
 type ProviderQuotaServiceParams struct {
 	fx.In
-	CacheConfig xcache.Config `optional:"true"`
 
 	Ent                       *ent.Client
 	SystemService             *SystemService
@@ -392,9 +390,8 @@ type ProviderQuotaService struct {
 	// in tests; the fx wiring installs the channel service.
 	quotaKeyReconciler ChannelQuotaKeyReconciler
 
-	mu             sync.Mutex
-	quotaCache     sync.Map
-	scheduledCheck *ScheduledCheck
+	mu         sync.Mutex
+	quotaCache sync.Map
 }
 
 func NewProviderQuotaService(params ProviderQuotaServiceParams) *ProviderQuotaService {
@@ -409,9 +406,6 @@ func NewProviderQuotaService(params ProviderQuotaServiceParams) *ProviderQuotaSe
 	}
 
 	svc.registerProviderQuotaSupport()
-	if params.CacheConfig.OnDemand {
-		svc.scheduledCheck = NewScheduledCheck(params.Ent.Channel.Use, params.Ent.System.Use, params.Ent.ProviderQuotaStatus.Use)
-	}
 
 	svc.loadQuotaCache(context.Background())
 
@@ -812,13 +806,9 @@ func (svc *ProviderQuotaService) runQuotaCheckForce(ctx context.Context) {
 	svc.runQuotaCheck(ctx, true)
 }
 
-func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) time.Time {
+func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) {
 	ctx = ent.NewContext(ctx, svc.db)
-	settings, err := svc.SystemService.ProviderQuotaCollectionSettings(svc.scheduledCheck.SettingsContext(ctx))
-	if err != nil {
-		log.Warn(ctx, "failed to load provider quota settings", log.Cause(err))
-		return time.Now()
-	}
+	settings := svc.SystemService.ProviderQuotaCollectionSettingsOrDefault(ctx)
 
 	now := time.Now()
 	log.Debug(ctx, "Checking for channels to poll",
@@ -838,13 +828,13 @@ func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) 
 		All(ctx)
 	if err != nil {
 		log.Error(ctx, "Failed to query channels for quota check", log.Cause(err))
-		return now
+		return
 	}
 
-	retry := svc.releaseQuotaKeyDisables(ctx, channels)
+	svc.releaseQuotaKeyDisables(ctx, channels)
 
 	if !settings.Enabled {
-		return retry
+		return
 	}
 
 	channelsToCheck := lo.Filter(channels, func(ch *ent.Channel, _ int) bool {
@@ -857,7 +847,7 @@ func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) 
 
 	if len(channelsToCheck) == 0 {
 		log.Debug(ctx, "No channels need quota check at this time")
-		return retry
+		return
 	}
 
 	log.Info(ctx, "Running quota check",
@@ -873,12 +863,7 @@ func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) 
 	}
 	if len(channelGroups) == 0 {
 		log.Debug(ctx, "No channels need quota check at this time")
-		for _, ch := range channelsToCheck {
-			if q := ch.Edges.ProviderQuotaStatus; q != nil && (retry.IsZero() || q.NextCheckAt.Before(retry)) {
-				retry = q.NextCheckAt
-			}
-		}
-		return retry
+		return
 	}
 
 	eg, egCtx := errgroup.WithContext(ctx)
@@ -892,7 +877,6 @@ func (svc *ProviderQuotaService) runQuotaCheck(ctx context.Context, force bool) 
 	if err := eg.Wait(); err != nil {
 		log.Info(ctx, "quota check group interrupted", log.Cause(err))
 	}
-	return now
 }
 
 // isQuotaPollableChannel reports whether a channel should be polled: every
@@ -946,10 +930,9 @@ func (svc *ProviderQuotaService) failureAccountsFor(
 // releaseQuotaKeyDisables drops quota-owned key disables whose collection,
 // routing mode or provider identity no longer justifies them. It never makes a
 // provider request.
-func (svc *ProviderQuotaService) releaseQuotaKeyDisables(ctx context.Context, channels []*ent.Channel) time.Time {
-	var retry time.Time
+func (svc *ProviderQuotaService) releaseQuotaKeyDisables(ctx context.Context, channels []*ent.Channel) {
 	if svc.quotaKeyReconciler == nil {
-		return retry
+		return
 	}
 
 	for _, ch := range channels {
@@ -958,14 +941,12 @@ func (svc *ProviderQuotaService) releaseQuotaKeyDisables(ctx context.Context, ch
 		}
 
 		if _, err := svc.reconcileQuotaKeyDisables(ctx, ch, nil); err != nil {
-			retry = time.Now()
 			log.Warn(ctx, "Failed to release quota-owned API key disables",
 				log.Int("channel_id", ch.ID),
 				log.String("provider", svc.getProviderType(ch)),
 				log.Cause(err))
 		}
 	}
-	return retry
 }
 
 // reconcileQuotaKeyDisables runs one reconciliation under a host-authorized

@@ -100,7 +100,7 @@ func (m *Manager) Invoke(ctx context.Context, req InvokeRequest) (InvokeResult, 
 	gen := req.Generation
 	pinned := gen != nil
 	if gen == nil {
-		gen = m.Current()
+		gen = m.current()
 	}
 	if gen == nil {
 		return InvokeResult{}, ErrGenerationClosed

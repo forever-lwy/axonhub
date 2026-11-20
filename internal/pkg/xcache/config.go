@@ -17,12 +17,9 @@ const (
 )
 
 type Config struct {
-	Mode string `conf:"mode" yaml:"mode" json:"mode"`
-	// OnDemand lets a single server refresh database-backed caches and discover
-	// scheduled work on access or after writes instead of polling an idle database.
-	OnDemand bool          `conf:"on_demand" yaml:"on_demand" json:"on_demand"`
-	Memory   MemoryConfig  `conf:"memory" yaml:"memory" json:"memory"`
-	Redis    xredis.Config `conf:"redis" yaml:"redis" json:"redis"`
+	Mode   string        `conf:"mode" yaml:"mode" json:"mode"`
+	Memory MemoryConfig  `conf:"memory" yaml:"memory" json:"memory"`
+	Redis  xredis.Config `conf:"redis" yaml:"redis" json:"redis"`
 }
 
 type MemoryConfig struct {

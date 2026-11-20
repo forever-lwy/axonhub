@@ -48,9 +48,6 @@ type Cache[T any] struct {
 	refreshInterval time.Duration
 	refreshTimeout  time.Duration
 	ticker          *time.Ticker
-	onDemand        bool
-	lastChecked     time.Time // guarded by mu, independent of the database update watermark
-	idleMaintenance func()
 
 	stopCh   chan struct{}
 	stopOnce sync.Once
@@ -79,10 +76,6 @@ type Options[T any] struct {
 
 	// RefreshInterval enables periodic refresh. Must be greater than zero.
 	RefreshInterval time.Duration
-	// OnDemand checks an expired snapshot when it is read. Notifications continue
-	// to work while idle. Indexed caches use the tick only for local TTL eviction.
-	OnDemand        bool
-	idleMaintenance func()
 
 	// DebounceDelay is the delay before async reload to batch multiple triggers.
 	// Defaults to 500ms if not set.
@@ -126,17 +119,13 @@ func NewCache[T any](opts Options[T]) *Cache[T] {
 		debounceDelay:   debounce,
 		refreshInterval: opts.RefreshInterval,
 		refreshTimeout:  timeout,
-		onDemand:        opts.OnDemand,
-		idleMaintenance: opts.idleMaintenance,
 		asyncReloadCh:   make(chan struct{}, 1),
 		stopCh:          make(chan struct{}),
 	}
 
 	ctx := context.Background()
 
-	if !opts.OnDemand || opts.idleMaintenance != nil {
-		c.ticker = time.NewTicker(opts.RefreshInterval)
-	}
+	c.ticker = time.NewTicker(opts.RefreshInterval)
 	go c.worker()
 
 	if opts.Watcher != nil {
@@ -146,9 +135,8 @@ func NewCache[T any](opts Options[T]) *Cache[T] {
 		go c.watchWorker(watchCh)
 	}
 
-	log.Debug(ctx, "live cache started",
+	log.Debug(ctx, "live cache started with periodic refresh",
 		log.String("name", c.name),
-		log.Bool("on_demand", c.onDemand),
 		log.Duration("interval", opts.RefreshInterval),
 		log.Duration("debounce", debounce))
 
@@ -161,23 +149,6 @@ func (c *Cache[T]) GetData() T {
 	defer c.mu.RUnlock()
 
 	return c.data
-}
-
-// RefreshIfStale lets policy callers propagate a refresh error instead of using
-// the last good snapshot. A successful check with unchanged data also renews it.
-func (c *Cache[T]) RefreshIfStale(ctx context.Context) error {
-	if !c.onDemand {
-		return nil
-	}
-	c.mu.RLock()
-	stale := time.Since(c.lastChecked) >= c.refreshInterval
-	c.mu.RUnlock()
-	if stale {
-		ctx, cancel := context.WithTimeout(ctx, c.refreshTimeout)
-		defer cancel()
-		return c.Load(ctx, false)
-	}
-	return nil
 }
 
 // GetLastUpdate returns the timestamp of the last successful data update.
@@ -244,9 +215,6 @@ func (c *Cache[T]) loadInternal(ctx context.Context, force bool) error {
 	}
 
 	if !changed && !force {
-		c.mu.Lock()
-		c.lastChecked = time.Now()
-		c.mu.Unlock()
 		log.Debug(ctx, "cache refresh skipped: no changes detected", log.String("name", c.name))
 		return nil
 	}
@@ -255,7 +223,6 @@ func (c *Cache[T]) loadInternal(ctx context.Context, force bool) error {
 	old := c.data
 	c.data = newData
 	c.lastUpdate = newUpdateTime
-	c.lastChecked = time.Now()
 	c.mu.Unlock()
 
 	// Call OnSwap callback for cleanup with panic recovery.
@@ -331,11 +298,7 @@ func (c *Cache[T]) worker() {
 	var (
 		debounceTimer *time.Timer
 		debounceCh    <-chan time.Time
-		ticks         <-chan time.Time
 	)
-	if c.ticker != nil {
-		ticks = c.ticker.C
-	}
 
 	for {
 		select {
@@ -348,11 +311,7 @@ func (c *Cache[T]) worker() {
 
 			return
 
-		case <-ticks:
-			if c.onDemand {
-				c.idleMaintenance()
-				continue
-			}
+		case <-c.ticker.C:
 			log.Debug(context.Background(), "live cache periodic refresh starting", log.String("name", c.name))
 			c.doRefresh("periodic")
 

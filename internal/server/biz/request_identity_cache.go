@@ -117,7 +117,13 @@ func (c *requestIdentityCache) hook(identityField string) ent.Hook {
 			if err != nil {
 				return value, err
 			}
-			runAfterMutationCommit(ctx, m, c.invalidate)
+			// Use the mutation's transaction even when its caller supplied only tx.Client().
+			if tm, ok := m.(interface{ Tx() (*ent.Tx, error) }); ok {
+				if tx, txErr := tm.Tx(); txErr == nil {
+					ctx = ent.NewTxContext(ctx, tx)
+				}
+			}
+			runAfterCommit(ctx, c.invalidate)
 			return value, nil
 		})
 	}

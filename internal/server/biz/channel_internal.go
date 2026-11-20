@@ -23,22 +23,12 @@ func (svc *ChannelService) startPerformanceProcess() {
 
 func (svc *ChannelService) runSyncChannelModelsPeriodically(ctx context.Context) {
 	ctx = authz.WithSystemBypass(ctx, "channel-run-model-sync")
-	err := svc.modelSyncCheck.Run(func(bool) (time.Time, error) {
-		setting, err := svc.SystemService.ChannelSetting(svc.modelSyncCheck.SettingsContext(ctx))
-		if err != nil {
-			return time.Time{}, err
-		}
-		now := xtime.UTCNow()
-		interval := time.Duration(getIntervalMinutesFromAutoSyncFrequency(setting.AutoSync.Frequency)) * time.Minute
-		next := now.Truncate(interval).Add(interval)
-		if !svc.shouldRunModelSync(now, setting.AutoSync.Frequency) || svc.syncChannelModels(ctx) {
-			return next, nil
-		}
-		return time.Time{}, nil
-	})
-	if err != nil {
-		log.Warn(ctx, "failed to load model sync settings", log.Cause(err))
+	setting := svc.SystemService.ChannelSettingOrDefault(ctx)
+	if !svc.shouldRunModelSync(xtime.UTCNow(), setting.AutoSync.Frequency) {
+		return
 	}
+
+	svc.syncChannelModels(ctx)
 }
 
 func (svc *ChannelService) shouldRunModelSync(now time.Time, frequency AutoSyncFrequency) bool {

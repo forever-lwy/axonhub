@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -19,38 +18,6 @@ type testItem struct {
 	Value     string
 	UpdatedAt time.Time
 	Deleted   bool
-}
-
-func TestOnDemandIndexReadsOnlyRequestedKeys(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var scans, reads int
-		cache := NewIndexedCache(IndexedOptions[string, *testItem]{
-			OnDemand: true, TTL: time.Hour, RefreshInterval: 30 * time.Second,
-			KeyFunc: func(item *testItem) string { return item.Key },
-			LoadSinceFunc: func(context.Context, time.Time) ([]*testItem, time.Time, error) {
-				scans++
-				return []*testItem{{Key: "first"}, {Key: "second"}}, time.Now(), nil
-			},
-			LoadOneFunc: func(_ context.Context, key string) (*testItem, error) {
-				reads++
-				return &testItem{Key: key, Value: "fresh"}, nil
-			},
-		})
-		defer cache.Stop()
-		require.NoError(t, cache.Load(t.Context()))
-		time.Sleep(10 * time.Minute)
-		synctest.Wait()
-		require.Equal(t, 1, scans)
-		require.Zero(t, reads)
-		require.Empty(t, cache.index)
-		for range 2 {
-			row, err := cache.Get(t.Context(), "first")
-			require.NoError(t, err)
-			require.Equal(t, "fresh", row.Value)
-		}
-		require.Equal(t, 1, reads)
-		require.Equal(t, 1, scans)
-	})
 }
 
 func TestIndexedCache_GetWithAutoLoad(t *testing.T) {

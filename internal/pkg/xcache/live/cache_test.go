@@ -2,10 +2,8 @@ package live
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
-	"testing/synctest"
 	"time"
 
 	"github.com/stretchr/testify/assert"
@@ -13,40 +11,6 @@ import (
 
 	"github.com/looplj/axonhub/internal/pkg/watcher"
 )
-
-func TestOnDemandSnapshotRefresh(t *testing.T) {
-	synctest.Test(t, func(t *testing.T) {
-		var calls int
-		var failure error
-		cache := NewCache(Options[string]{
-			OnDemand:        true,
-			RefreshInterval: 30 * time.Second,
-			RefreshFunc: func(_ context.Context, _ string, since time.Time) (string, time.Time, bool, error) {
-				calls++
-				return "current", time.Now(), since.IsZero(), failure
-			},
-		})
-		defer cache.Stop()
-		require.NoError(t, cache.Load(t.Context(), true))
-		time.Sleep(10 * time.Minute)
-		synctest.Wait()
-		require.Equal(t, 1, calls)
-
-		failure = errors.New("database unavailable")
-		require.ErrorIs(t, cache.RefreshIfStale(t.Context()), failure)
-		failure = nil
-		require.NoError(t, cache.RefreshIfStale(t.Context()))
-		require.NoError(t, cache.RefreshIfStale(t.Context()))
-		require.Equal(t, 3, calls)
-		require.Equal(t, "current", cache.GetData())
-
-		cache.TriggerForceAsyncReload()
-		synctest.Wait()
-		time.Sleep(time.Second)
-		synctest.Wait()
-		require.Equal(t, 4, calls)
-	})
-}
 
 func TestCache(t *testing.T) {
 	var callCount int32

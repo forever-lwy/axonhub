@@ -3,7 +3,6 @@ package biz
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"go.uber.org/fx"
@@ -14,7 +13,6 @@ import (
 	"github.com/looplj/axonhub/internal/ent/prompt"
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
-	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xerrors"
 	"github.com/looplj/axonhub/internal/pkg/xmap"
 	"github.com/looplj/axonhub/internal/pkg/xregexp"
@@ -24,8 +22,7 @@ import (
 type PromptServiceParams struct {
 	fx.In
 
-	Ent         *ent.Client
-	CacheConfig xcache.Config `optional:"true"`
+	Ent *ent.Client
 }
 
 func NewPromptService(params PromptServiceParams) *PromptService {
@@ -37,9 +34,6 @@ func NewPromptService(params PromptServiceParams) *PromptService {
 		latestCachedUpdateTime: xmap.New[int, time.Time](),
 	}
 
-	if params.CacheConfig.OnDemand {
-		svc.refreshCheck = NewScheduledCheck(params.Ent.Prompt.Use)
-	}
 	return svc
 }
 
@@ -64,8 +58,6 @@ func (svc *PromptService) Initialize(ctx context.Context) error {
 
 type PromptService struct {
 	*AbstractService
-	refreshCheck *ScheduledCheck
-	loadMu       sync.Mutex
 
 	// cachedEnabledPrompts 记录已启用的 prompt，key 为 projectID
 	cachedEnabledPrompts *xmap.Map[int, []*ent.Prompt]
@@ -84,16 +76,12 @@ func (svc *PromptService) RegisterScheduledTasks(ctx context.Context, s *schedul
 }
 
 func (svc *PromptService) loadPromptsPeriodic(ctx context.Context) {
-	_ = svc.refreshCheck.Run(func(bool) (time.Time, error) {
-		var retry error
-		svc.latestCachedUpdateTime.Range(func(projectID int, _ time.Time) bool {
-			if err := svc.loadPrompts(ctx, projectID); err != nil {
-				log.Error(ctx, "failed to reload prompts periodically", log.Int("project_id", projectID), log.Cause(err))
-				retry = err
-			}
-			return true
-		})
-		return time.Time{}, retry
+	svc.latestCachedUpdateTime.Range(func(projectID int, _ time.Time) bool {
+		if err := svc.loadPrompts(ctx, projectID); err != nil {
+			log.Error(ctx, "failed to reload prompts periodically", log.Int("project_id", projectID), log.Cause(err))
+		}
+
+		return true
 	})
 }
 
@@ -175,7 +163,7 @@ func (svc *PromptService) CreatePrompt(ctx context.Context, input ent.CreateProm
 		return nil, fmt.Errorf("failed to create prompt: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return prompt, nil
 }
@@ -245,7 +233,7 @@ func (svc *PromptService) UpdatePrompt(ctx context.Context, id int, input *ent.U
 		return nil, fmt.Errorf("failed to query updated prompt: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return p, nil
 }
@@ -270,7 +258,7 @@ func (svc *PromptService) DeletePrompt(ctx context.Context, id int) error {
 		return fmt.Errorf("prompt not found or not in project")
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return nil
 }
@@ -306,7 +294,7 @@ func (svc *PromptService) UpdatePromptStatus(ctx context.Context, id int, status
 		return nil, fmt.Errorf("failed to query updated prompt: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return p, nil
 }
@@ -327,7 +315,7 @@ func (svc *PromptService) BulkDeletePrompts(ctx context.Context, ids []int) erro
 		return fmt.Errorf("failed to bulk delete prompts: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return nil
 }
@@ -349,7 +337,7 @@ func (svc *PromptService) BulkEnablePrompts(ctx context.Context, ids []int) erro
 		return fmt.Errorf("failed to bulk enable prompts: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return nil
 }
@@ -371,17 +359,15 @@ func (svc *PromptService) BulkDisablePrompts(ctx context.Context, ids []int) err
 		return fmt.Errorf("failed to bulk disable prompts: %w", err)
 	}
 
-	svc.reloadPromptsAfterCommit(ctx, projectID)
+	svc.asyncReloadPrompts(projectID)
 
 	return nil
 }
 
 func (svc *PromptService) loadPrompts(ctx context.Context, projectID int) error {
-	svc.loadMu.Lock()
-	defer svc.loadMu.Unlock()
 	ctx = authz.WithSystemBypass(ctx, "prompt-load-cache")
 	// Check if there are updates for this project
-	latestUpdatedPrompt, err := svc.db.Prompt.Query().
+	latestUpdatedPrompt, err := svc.entFromContext(ctx).Prompt.Query().
 		Where(prompt.ProjectID(projectID)).
 		Order(ent.Desc(prompt.FieldUpdatedAt)).
 		First(ctx)
@@ -390,32 +376,32 @@ func (svc *PromptService) loadPrompts(ctx context.Context, projectID int) error 
 	}
 
 	lastUpdate, _ := svc.latestCachedUpdateTime.Load(projectID)
-	var updated time.Time
 	if latestUpdatedPrompt != nil {
-		updated = latestUpdatedPrompt.UpdatedAt
-		if svc.refreshCheck == nil && !updated.After(lastUpdate) {
+		if !latestUpdatedPrompt.UpdatedAt.After(lastUpdate) {
 			return nil
 		}
 
+		svc.latestCachedUpdateTime.Store(projectID, latestUpdatedPrompt.UpdatedAt)
+	} else {
+		svc.latestCachedUpdateTime.Store(projectID, time.Time{})
 	}
 
-	entities, err := queryEnabledPrompts(ctx, svc.db, projectID)
+	entities, err := svc.entFromContext(ctx).Prompt.Query().
+		Where(
+			prompt.ProjectID(projectID),
+			prompt.StatusEQ(prompt.StatusEnabled),
+		).
+		All(ctx)
 	if err != nil {
 		return err
 	}
 
 	svc.cachedEnabledPrompts.Store(projectID, entities)
-	svc.latestCachedUpdateTime.Store(projectID, updated)
 
 	return nil
 }
 
 func (svc *PromptService) GetEnabledPrompts(ctx context.Context, projectID int) ([]*ent.Prompt, error) {
-	if client := svc.entFromContext(ctx); client != svc.db {
-		return authz.RunAsHost(ctx, client, "prompt-load-cache", func(hostCtx context.Context) ([]*ent.Prompt, error) {
-			return queryEnabledPrompts(hostCtx, client, projectID)
-		})
-	}
 	if prompts, ok := svc.cachedEnabledPrompts.Load(projectID); ok {
 		return prompts, nil
 	}
@@ -429,28 +415,22 @@ func (svc *PromptService) GetEnabledPrompts(ctx context.Context, projectID int) 
 	return prompts, nil
 }
 
-func queryEnabledPrompts(ctx context.Context, client *ent.Client, projectID int) ([]*ent.Prompt, error) {
-	return client.Prompt.Query().Where(prompt.ProjectID(projectID), prompt.StatusEQ(prompt.StatusEnabled)).All(ctx)
-}
+func (svc *PromptService) asyncReloadPrompts(projectID int) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error(context.Background(), "panic in async reload prompts", log.Any("panic", r))
+			}
+		}()
 
-func (svc *PromptService) reloadPromptsAfterCommit(ctx context.Context, projectID int) {
-	runAfterCommit(ctx, func(context.Context) { go svc.reloadPrompts(projectID) })
-}
+		reloadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-func (svc *PromptService) reloadPrompts(projectID int) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Error(context.Background(), "panic in async reload prompts", log.Any("panic", r))
+		// Force reload by resetting latestUpdate timestamp
+		svc.latestCachedUpdateTime.Store(projectID, time.Time{})
+
+		if reloadErr := svc.loadPrompts(reloadCtx, projectID); reloadErr != nil {
+			log.Error(reloadCtx, "failed to reload prompts", log.Int("project_id", projectID), log.Cause(reloadErr))
 		}
 	}()
-
-	reloadCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	// Force reload by resetting latestUpdate timestamp
-	svc.latestCachedUpdateTime.Store(projectID, time.Time{})
-
-	if reloadErr := svc.loadPrompts(reloadCtx, projectID); reloadErr != nil {
-		log.Error(reloadCtx, "failed to reload prompts", log.Int("project_id", projectID), log.Cause(reloadErr))
-	}
 }
