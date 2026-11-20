@@ -149,6 +149,22 @@ func TestMaxRequestBodySize(t *testing.T) {
 	}
 }
 
+func TestOnDemandCacheConfig(t *testing.T) {
+	file := writeTestConfig(t, "")
+	cfg, _, err := loadConfig(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Cache.OnDemand {
+		t.Fatal("expected periodic refresh by default")
+	}
+	t.Setenv("AXONHUB_CACHE_ON_DEMAND", "true")
+	cfg, _, err = loadConfig(file)
+	if err != nil || !cfg.Cache.OnDemand {
+		t.Fatalf("expected on-demand refresh from the environment, error %v", err)
+	}
+}
+
 func TestMetricsExporterConfigFromEnvironment(t *testing.T) {
 	t.Setenv("AXONHUB_METRICS_ENABLED", "true")
 	t.Setenv("AXONHUB_METRICS_EXPORTER_TYPE", "otlphttp")

@@ -147,9 +147,14 @@ func NewChannelService(params ChannelServiceParams) *ChannelService {
 	}
 
 	svc.channelNotifier = notifier
+	if params.CacheConfig.OnDemand {
+		svc.recoveryCheck = NewScheduledCheck(params.Ent.Channel.Use)
+		svc.modelSyncCheck = NewScheduledCheck(params.Ent.Channel.Use, params.Ent.System.Use)
+	}
 
 	svc.enabledChannelsCache = live.NewCache(live.Options[[]*Channel]{
 		Name:            "axonhub:enabled_channels",
+		OnDemand:        params.CacheConfig.OnDemand,
 		InitialValue:    []*Channel{},
 		RefreshInterval: time.Minute,
 		RefreshFunc:     svc.onCacheRefreshed,
@@ -183,6 +188,8 @@ type ChannelService struct {
 
 	enabledChannelsCache *live.Cache[[]*Channel]
 	channelNotifier      watcher.Notifier[live.CacheEvent[struct{}]]
+	recoveryCheck        *ScheduledCheck
+	modelSyncCheck       *ScheduledCheck
 
 	// limiterForgetter is invoked after channel mutations so the orchestrator's
 	// ChannelLimiterManager can drop the limiter entry for the affected channel.
@@ -248,7 +255,7 @@ func (svc *ChannelService) RegisterScheduledTasks(ctx context.Context, s *schedu
 		Description: "Recover temporarily disabled channel credentials and the channels they gated",
 		CronExpr:    "* * * * *",
 		Timezone:    "UTC",
-	}, svc.cleanupExpiredDisabledAPIKeys)
+	}, svc.runChannelRecovery)
 }
 
 func (svc *ChannelService) reloadEnabledChannels(ctx context.Context, current []*Channel, lastUpdate time.Time) ([]*Channel, time.Time, bool, error) {
@@ -388,6 +395,9 @@ func stopChannelOutbounds(ch *Channel) {
 // This is incremented on every enabled channels cache swap and can be used
 // by external caches to detect when the underlying channel data has changed.
 func (svc *ChannelService) GetCacheVersion() int64 {
+	if svc.enabledChannelsCache != nil {
+		_ = svc.enabledChannelsCache.RefreshIfStale(context.Background())
+	}
 	return svc.cacheVersion.Load()
 }
 
@@ -398,6 +408,7 @@ func (svc *ChannelService) GetCacheVersion() int64 {
 // DO NOT modify the returned slice or any of its Channel elements.
 // Modifications will not persist and may cause data inconsistency.
 func (svc *ChannelService) GetEnabledChannels() []*Channel {
+	_ = svc.enabledChannelsCache.RefreshIfStale(context.Background())
 	return svc.enabledChannelsCache.GetData()
 }
 

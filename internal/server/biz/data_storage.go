@@ -45,6 +45,7 @@ type DataStorageService struct {
 
 	SystemService *SystemService
 	Cache         xcache.Cache[ent.DataStorage]
+	refreshCheck  *ScheduledCheck
 
 	// fsCache caches afero filesystem instances by data storage ID
 	fsCache map[int]afero.Fs
@@ -75,6 +76,9 @@ func NewDataStorageService(params DataStorageServiceParams) *DataStorageService 
 		fsCache:          make(map[int]afero.Fs),
 		objectStoreCache: make(map[int]ObjectStore),
 	}
+	if params.CacheConfig.OnDemand {
+		svc.refreshCheck = NewScheduledCheck(params.Client.DataStorage.Use)
+	}
 	svc.reloadFileSystemsPeriodically(context.Background())
 
 	return svc
@@ -97,15 +101,14 @@ func (s *DataStorageService) refreshFileSystems(ctx context.Context) error {
 		return err
 	}
 
+	var latest time.Time
 	if latestUpdatedStorage != nil {
-		if !latestUpdatedStorage.UpdatedAt.After(s.latestUpdate) {
+		latest = latestUpdatedStorage.UpdatedAt
+		if s.refreshCheck == nil && !latest.After(s.latestUpdate) {
 			log.Debug(ctx, "no data storage updates detected")
 			return nil
 		}
 
-		s.latestUpdate = latestUpdatedStorage.UpdatedAt
-	} else {
-		s.latestUpdate = time.Time{}
 	}
 
 	storages, err := s.entFromContext(ctx).DataStorage.Query().
@@ -138,6 +141,7 @@ func (s *DataStorageService) refreshFileSystems(ctx context.Context) error {
 	}
 
 	s.fsCacheMu.Lock()
+	s.latestUpdate = latest
 	s.fsCache = newCache
 	// Drop cached native object-store clients so changed configs are rebuilt lazily.
 	s.objectStoreCache = make(map[int]ObjectStore)

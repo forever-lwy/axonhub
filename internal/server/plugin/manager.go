@@ -306,6 +306,7 @@ func newManager(params ManagerParams, cfg managerConfig) (*Manager, error) {
 	initial := newGeneration(manager, nil)
 	manager.cache = live.NewCache(live.Options[*Generation]{
 		Name:            pluginCacheName,
+		OnDemand:        params.Cache.OnDemand,
 		InitialValue:    initial,
 		RefreshInterval: interval,
 		DebounceDelay:   debounce,
@@ -450,6 +451,9 @@ func (m *Manager) RegisterBuiltin(plugin Builtin) {
 
 // Current returns the generation serving new calls.
 func (m *Manager) Current() *Generation {
+	if m != nil && m.cache != nil {
+		_ = m.cache.RefreshIfStale(context.Background())
+	}
 	return m.current()
 }
 

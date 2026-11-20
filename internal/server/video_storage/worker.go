@@ -18,6 +18,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/datastorage"
 	"github.com/looplj/axonhub/internal/ent/request"
 	"github.com/looplj/axonhub/internal/log"
+	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/scheduler"
@@ -26,6 +27,7 @@ import (
 
 type Params struct {
 	fx.In
+	CacheConfig xcache.Config `optional:"true"`
 
 	Ent                *ent.Client
 	SystemService      *biz.SystemService
@@ -34,6 +36,7 @@ type Params struct {
 }
 
 type Worker struct {
+	check              *biz.ScheduledCheck
 	ent                *ent.Client
 	systemService      *biz.SystemService
 	dataStorageService *biz.DataStorageService
@@ -48,6 +51,9 @@ func NewWorker(params Params) *Worker {
 		videoService:       params.VideoService,
 	}
 
+	if params.CacheConfig.OnDemand {
+		w.check = biz.NewScheduledCheck(params.Ent.System.Use, params.Ent.Request.Use, params.Ent.DataStorage.Use)
+	}
 	return w
 }
 
@@ -101,32 +107,34 @@ func (w *Worker) runScanWithSystemContext(ctx context.Context) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 
-	if err := w.scanAndSave(ctx); err != nil {
+	if err := w.check.Run(func(bool) (time.Time, error) {
+		return w.scanAndSave(ctx)
+	}); err != nil {
 		log.Error(ctx, "Video storage worker failed", log.Cause(err))
 	}
 }
 
-func (w *Worker) scanAndSave(ctx context.Context) error {
-	settings, err := w.systemService.VideoStorageSettings(ctx)
+func (w *Worker) scanAndSave(ctx context.Context) (time.Time, error) {
+	settings, err := w.systemService.VideoStorageSettings(w.check.SettingsContext(ctx))
 	if err != nil {
-		return err
+		return time.Time{}, err
 	}
 
 	if !settings.Enabled {
-		return nil
+		return time.Time{}, nil
 	}
 
 	if settings.DataStorageID == 0 {
-		return fmt.Errorf("video storage enabled but data_storage_id is not set")
+		return time.Time{}, fmt.Errorf("video storage enabled but data_storage_id is not set")
 	}
 
 	ds, err := w.dataStorageService.GetDataStorageByID(ctx, settings.DataStorageID)
 	if err != nil {
-		return fmt.Errorf("failed to get data storage: %w", err)
+		return time.Time{}, fmt.Errorf("failed to get data storage: %w", err)
 	}
 
 	if ds.Primary || ds.Type == datastorage.TypeDatabase {
-		return fmt.Errorf("video storage must be non-database storage")
+		return time.Time{}, fmt.Errorf("video storage must be non-database storage")
 	}
 
 	limit := settings.ScanLimit
@@ -144,7 +152,7 @@ func (w *Worker) scanAndSave(ctx context.Context) error {
 		Limit(limit).
 		All(ctx)
 	if err != nil {
-		return fmt.Errorf("failed to query video requests: %w", err)
+		return time.Time{}, fmt.Errorf("failed to query video requests: %w", err)
 	}
 
 	for _, req := range reqs {
@@ -154,7 +162,10 @@ func (w *Worker) scanAndSave(ctx context.Context) error {
 		}
 	}
 
-	return nil
+	if len(reqs) > 0 {
+		return time.Now(), nil
+	}
+	return time.Time{}, nil
 }
 
 func (w *Worker) processOne(ctx context.Context, ds *ent.DataStorage, req *ent.Request) error {

@@ -122,6 +122,9 @@ db:
 cache:
   # One of: memory, redis, two-level (memory + redis)
   mode: "memory"                # (env: AXONHUB_CACHE_MODE)
+  # Enable when a single AxonHub instance owns all writes, e.g. with a scale-to-zero database.
+  # Refresh stale caches on access. Scheduled jobs with pending work still run at their usual times.
+  on_demand: false              # (env: AXONHUB_CACHE_ON_DEMAND)
   
   # Memory cache configuration
   memory:

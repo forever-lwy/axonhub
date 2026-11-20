@@ -68,7 +68,9 @@ func NewModelCacheService(params ModelCacheServiceParams) *ModelCacheService {
 		ttl = 5 * time.Minute
 	}
 	svc := &ModelCacheService{db: params.Ent, notifier: notifier}
-	svc.initCache(svc.options(ttl))
+	options := svc.options(ttl)
+	options.OnDemand = params.CacheConfig.OnDemand
+	svc.initCache(options)
 	if err := svc.cache.Load(context.Background()); err != nil {
 		svc.Stop()
 		panic(fmt.Errorf("model cache initial load failed: %w", err))
@@ -99,10 +101,7 @@ func NewModelCacheService(params ModelCacheServiceParams) *ModelCacheService {
 			if key, ok := m.ModelID(); ok {
 				keys = append(keys, key)
 			}
-			if tx, txErr := m.Tx(); txErr == nil {
-				ctx = ent.NewTxContext(ctx, tx)
-			}
-			runAfterCommit(ctx, func(ctx context.Context) { svc.invalidate(ctx, keys) })
+			runAfterMutationCommit(ctx, m, func(ctx context.Context) { svc.invalidate(ctx, keys) })
 			return value, nil
 		})
 	})

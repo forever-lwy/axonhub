@@ -17,6 +17,7 @@ import (
 	"github.com/looplj/axonhub/internal/ent/channel"
 	"github.com/looplj/axonhub/internal/ent/channelprobe"
 	"github.com/looplj/axonhub/internal/log"
+	"github.com/looplj/axonhub/internal/pkg/xcache"
 	"github.com/looplj/axonhub/internal/pkg/xtime"
 	"github.com/looplj/axonhub/internal/scopes"
 	"github.com/looplj/axonhub/internal/server/gql/qb"
@@ -44,6 +45,7 @@ type ChannelProbeServiceParams struct {
 
 	Ent           *ent.Client
 	SystemService *SystemService
+	CacheConfig   xcache.Config `optional:"true"`
 }
 
 // ChannelProbeService handles channel probe operations.
@@ -53,6 +55,7 @@ type ChannelProbeService struct {
 	SystemService     *SystemService
 	mu                sync.Mutex
 	lastExecutionTime time.Time
+	probeCheck        *ScheduledCheck
 }
 
 // NewChannelProbeService creates a new ChannelProbeService.
@@ -65,6 +68,9 @@ func NewChannelProbeService(params ChannelProbeServiceParams) *ChannelProbeServi
 		lastExecutionTime: time.Time{},
 	}
 
+	if params.CacheConfig.OnDemand {
+		svc.probeCheck = NewScheduledCheck(params.Ent.RequestExecution.Use, params.Ent.UsageLog.Use, params.Ent.System.Use)
+	}
 	return svc
 }
 
@@ -238,35 +244,45 @@ func (svc *ChannelProbeService) computeAllChannelProbeStats(
 func (svc *ChannelProbeService) runProbe(ctx context.Context) {
 	// Check if probe is enabled
 	setting := svc.SystemService.ChannelSettingOrDefault(ctx)
+	if err := svc.runProbeForSettings(ctx, setting, xtime.UTCNow()); err != nil {
+		log.Warn(ctx, "failed to collect channel probe data", log.Cause(err))
+	}
+}
+
+func (svc *ChannelProbeService) runProbeForSettings(ctx context.Context, setting *SystemChannelSettings, now time.Time) error {
 	if !setting.Probe.Enabled {
 		log.Debug(ctx, "Channel probe is disabled, skipping")
-		return
+		return nil
 	}
 
 	intervalMinutes := setting.Probe.GetIntervalMinutes()
-	now := xtime.UTCNow()
 	// Align current time to interval boundary
 	alignedTime := now.Truncate(time.Duration(intervalMinutes) * time.Minute)
 	timestamp := alignedTime.Unix()
 
 	// Check if we should execute based on last execution time
 	svc.mu.Lock()
+	defer svc.mu.Unlock()
 
 	lastExecution := svc.lastExecutionTime
 	if !lastExecution.IsZero() && !shouldRunProbe(setting.Probe.Frequency, now, lastExecution) {
 		// Already executed for this interval
-		svc.mu.Unlock()
 		log.Debug(ctx, "Skipping probe, already executed for this interval",
 			log.Int64("timestamp", timestamp),
 		)
 
-		return
+		return nil
 	}
-	// Update last execution time
+	if err := svc.collectProbeWindow(ctx, alignedTime, intervalMinutes); err != nil {
+		return err
+	}
 	svc.lastExecutionTime = alignedTime
-	svc.mu.Unlock()
+	return nil
+}
 
+func (svc *ChannelProbeService) collectProbeWindow(ctx context.Context, alignedTime time.Time, intervalMinutes int) error {
 	ctx = ent.NewContext(ctx, svc.db)
+	timestamp := alignedTime.Unix()
 
 	log.Debug(ctx, "Starting channel probe",
 		log.Int("interval_minutes", intervalMinutes),
@@ -279,13 +295,12 @@ func (svc *ChannelProbeService) runProbe(ctx context.Context) {
 		Select(channel.FieldID).
 		All(ctx)
 	if err != nil {
-		log.Error(ctx, "Failed to query enabled channels", log.Cause(err))
-		return
+		return fmt.Errorf("query enabled channels: %w", err)
 	}
 
 	if len(channels) == 0 {
 		log.Debug(ctx, "No enabled channels to probe")
-		return
+		return nil
 	}
 
 	// Calculate time range based on frequency
@@ -300,8 +315,7 @@ func (svc *ChannelProbeService) runProbe(ctx context.Context) {
 	// Batch compute all channel stats in 3 queries instead of N*4 queries
 	allStats, err := svc.computeAllChannelProbeStats(ctx, channelIDs, startTime, alignedTime)
 	if err != nil {
-		log.Error(ctx, "Failed to compute channel probe stats", log.Cause(err))
-		return
+		return fmt.Errorf("compute channel probe stats: %w", err)
 	}
 
 	// Collect probe data for each channel
@@ -325,19 +339,19 @@ func (svc *ChannelProbeService) runProbe(ctx context.Context) {
 
 	if len(probes) == 0 {
 		log.Debug(ctx, "No probe data to store (all channels have 0 requests)")
-		return
+		return nil
 	}
 
 	// Bulk create probes
 	if err := svc.db.ChannelProbe.CreateBulk(probes...).Exec(ctx); err != nil {
-		log.Error(ctx, "Failed to create channel probes", log.Cause(err))
-		return
+		return fmt.Errorf("create channel probes: %w", err)
 	}
 
 	log.Debug(ctx, "Channel probe completed",
 		log.Int("channels_probed", len(probes)),
 		log.Int64("timestamp", timestamp),
 	)
+	return nil
 }
 
 // generateTimestamps generates a slice of Unix timestamps from startTime to endTime

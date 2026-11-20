@@ -443,6 +443,47 @@ func applyRecoveredChannelStatus(
 	return update.SetStatus(channel.StatusEnabled).ClearErrorMessage().ClearAutoDisabledAt().ClearAutoDisableExpiresAt()
 }
 
+func (svc *ChannelService) runChannelRecovery(ctx context.Context) {
+	if svc.recoveryCheck == nil {
+		svc.cleanupExpiredDisabledAPIKeys(ctx)
+		return
+	}
+	err := svc.recoveryCheck.Run(func(bool) (time.Time, error) {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		ctx = authz.WithSystemBypass(ctx, "channel-recovery-deadline")
+		channels, err := svc.db.Channel.Query().
+			Where(channel.StatusIn(channel.StatusEnabled, channel.StatusDisabled)).
+			Select(channel.FieldStatus, channel.FieldAutoDisabledAt, channel.FieldAutoDisableExpiresAt, channel.FieldDisabledAPIKeys).
+			All(ctx)
+		if err != nil {
+			return time.Time{}, err
+		}
+		var next time.Time
+		consider := func(t *time.Time) {
+			if t != nil && (next.IsZero() || t.Before(next)) {
+				next = *t
+			}
+		}
+		for _, ch := range channels {
+			if ch.Status == channel.StatusDisabled && ch.AutoDisabledAt != nil {
+				consider(ch.AutoDisableExpiresAt)
+			}
+			for _, key := range ch.DisabledAPIKeys {
+				consider(key.ExpiresAt)
+			}
+		}
+		if !next.IsZero() && !next.After(time.Now()) {
+			svc.cleanupExpiredDisabledAPIKeys(ctx)
+			// Re-read deadlines on the next tick, including any failed recoveries.
+		}
+		return next, nil
+	})
+	if err != nil {
+		log.Warn(ctx, "failed to discover channel recovery deadlines", log.Cause(err))
+	}
+}
+
 // cleanupExpiredDisabledAPIKeys prunes elapsed temporary disables and restores
 // channels that were disabled only because all of their keys were unavailable.
 func (svc *ChannelService) cleanupExpiredDisabledAPIKeys(ctx context.Context) {

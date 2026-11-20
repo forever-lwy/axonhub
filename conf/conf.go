@@ -373,6 +373,7 @@ func setDefaults(v *viper.Viper) {
 
 	// Cache defaults
 	v.SetDefault("cache.mode", "memory")
+	v.SetDefault("cache.on_demand", false)
 	v.SetDefault("cache.default_expiration", "5m")
 	v.SetDefault("cache.cleanup_interval", "10m")
 	v.SetDefault("cache.redis.addr", "")

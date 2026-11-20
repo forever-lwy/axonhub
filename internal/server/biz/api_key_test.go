@@ -19,10 +19,49 @@ import (
 	"github.com/looplj/axonhub/internal/ent/role"
 	"github.com/looplj/axonhub/internal/ent/user"
 	"github.com/looplj/axonhub/internal/objects"
+	"github.com/looplj/axonhub/internal/pkg/watcher"
 	"github.com/looplj/axonhub/internal/pkg/xcache"
+	"github.com/looplj/axonhub/internal/pkg/xcache/live"
 	"github.com/looplj/axonhub/internal/pkg/xredis"
 	"github.com/looplj/axonhub/internal/scopes"
 )
+
+func TestOnDemandAPIKeyRevocationAfterCommit(t *testing.T) {
+	svc, client := setupTestAPIKeyService(t, xcache.Config{Mode: xcache.ModeMemory, OnDemand: true})
+	t.Cleanup(func() { client.Close() })
+	t.Cleanup(svc.Stop)
+	// A lost notification must not affect the next local authentication.
+	svc.apiKeyNotifier = watcher.NewMemoryWatcher[live.CacheEvent[string]](watcher.MemoryWatcherOptions{})
+	auth := &AuthService{APIKeyService: svc}
+	ctx := authz.WithTestBypass(ent.NewContext(t.Context(), client))
+	owner := client.User.Create().SetEmail("owner@example.com").SetPassword("fixture").SetFirstName("Test").SetLastName("User").SaveX(ctx)
+	proj := client.Project.Create().SetName("test").SetStatus(project.StatusActive).SaveX(ctx)
+	key := client.APIKey.Create().SetKey(uuid.NewString()).SetName("test").SetUser(owner).SetProject(proj).SaveX(ctx)
+	_, err := auth.AuthenticateAPIKey(ctx, key.Key)
+	require.NoError(t, err)
+
+	for _, commit := range []bool{false, true} {
+		tx, err := client.Tx(ctx)
+		require.NoError(t, err)
+		txCtx := ent.NewContext(ctx, tx.Client())
+		_, err = svc.UpdateAPIKeyStatus(txCtx, key.ID, apikey.StatusDisabled)
+		require.NoError(t, err)
+		_, err = auth.AuthenticateAPIKey(txCtx, key.Key)
+		require.ErrorIs(t, err, ErrInvalidAPIKey)
+		cached, ok := svc.APIKeyCache.GetCached(buildAPIKeyCacheKey(key.Key))
+		require.True(t, ok)
+		require.Equal(t, apikey.StatusEnabled, cached.Status)
+		if commit {
+			require.NoError(t, tx.Commit())
+			_, err = auth.AuthenticateAPIKey(ctx, key.Key)
+			require.ErrorIs(t, err, ErrInvalidAPIKey)
+		} else {
+			require.NoError(t, tx.Rollback())
+			_, err = auth.AuthenticateAPIKey(ctx, key.Key)
+			require.NoError(t, err)
+		}
+	}
+}
 
 func TestGenerateAPIKey(t *testing.T) {
 	apiKey, err := GenerateAPIKey("ah")

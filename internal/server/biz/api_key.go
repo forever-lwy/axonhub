@@ -97,6 +97,7 @@ func NewAPIKeyService(params APIKeyServiceParams) *APIKeyService {
 	svc.apiKeyNotifier = notifier
 	svc.APIKeyCache = live.NewIndexedCache(live.IndexedOptions[string, *ent.APIKey]{
 		Name:            "axonhub:api_keys",
+		OnDemand:        params.CacheConfig.OnDemand,
 		TTL:             ttl,
 		RefreshInterval: 30 * time.Second,
 		DebounceDelay:   500 * time.Millisecond,
@@ -670,12 +671,7 @@ func (s *APIKeyService) updatePersonalAPIKeyStatusByUser(
 		return nil
 	}
 	// Keep transaction hooks on the original context; RunAsHost does not carry them.
-	runAfterCommit(ctx, func(ctx context.Context) {
-		for _, key := range keys {
-			s.APIKeyCache.Invalidate(buildAPIKeyCacheKey(key))
-		}
-		s.invalidateAPIKeyCaches(ctx, keys...)
-	})
+	s.invalidateAPIKeyCaches(ctx, keys...)
 
 	return nil
 }
@@ -1023,7 +1019,14 @@ func (s *APIKeyService) GetAPIKey(ctx context.Context, key string) (*ent.APIKey,
 	ctx = context.WithValue(ctx, apiKeyCtxKey{}, key)
 	cacheKey := buildAPIKeyCacheKey(key)
 
-	cached, err := s.APIKeyCache.Get(ctx, cacheKey)
+	var cached *ent.APIKey
+	var err error
+	if client := s.entFromContext(ctx); client != s.db {
+		// A transaction may see uncommitted changes. Keep them out of the process cache.
+		cached, err = s.onLoadOneKey(ctx, cacheKey)
+	} else {
+		cached, err = s.APIKeyCache.Get(ctx, cacheKey)
+	}
 
 	if err != nil {
 		if errors.Is(err, live.ErrKeyNotFound) {
@@ -1100,9 +1103,16 @@ func (s *APIKeyService) invalidateAPIKeyCaches(ctx context.Context, keys ...stri
 	}
 
 	cacheKeys := buildAPIKeyCacheKeys(keys)
-	if err := s.apiKeyNotifier.Notify(ctx, live.NewInvalidateKeysEvent(cacheKeys...)); err != nil {
-		log.Warn(ctx, "api key cache watcher notify failed", log.Cause(err))
-	}
+	// The builder exposes the writer's transaction even for tx.Client() callers.
+	// Inspecting its mutation does not execute a query.
+	runAfterMutationCommit(ctx, s.entFromContext(ctx).APIKey.Update().Mutation(), func(ctx context.Context) {
+		for _, key := range cacheKeys {
+			s.APIKeyCache.Invalidate(key)
+		}
+		if err := s.apiKeyNotifier.Notify(ctx, live.NewInvalidateKeysEvent(cacheKeys...)); err != nil {
+			log.Warn(ctx, "api key cache watcher notify failed", log.Cause(err))
+		}
+	})
 }
 
 func (s *APIKeyService) bulkUpdateAPIKeyStatus(ctx context.Context, ids []int, status apikey.Status, action string) error {
@@ -1193,7 +1203,8 @@ func (s *APIKeyService) BulkArchiveAPIKeys(ctx context.Context, ids []int) error
 // RotateAPIKey rotates an API key by generating a new key value while preserving all other properties.
 // This is useful when a key is compromised or when an employee leaves, without losing usage statistics.
 func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, error) {
-	existing, err := s.db.APIKey.Get(ctx, id)
+	client := s.entFromContext(ctx)
+	existing, err := client.APIKey.Get(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get API key: %w", err)
 	}
@@ -1235,7 +1246,7 @@ func (s *APIKeyService) RotateAPIKey(ctx context.Context, id int) (*ent.APIKey, 
 	oldKey := existing.Key
 
 	// Update the key field directly using Ent
-	rotated, err := s.db.APIKey.UpdateOneID(id).
+	rotated, err := client.APIKey.UpdateOneID(id).
 		SetKey(newKey).
 		Save(ctx)
 	if err != nil {

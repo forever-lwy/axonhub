@@ -1021,7 +1021,7 @@ func (s *SystemService) getSystemValue(ctx context.Context, key string) (string,
 	// A transaction must see its own writes, which another request may have shadowed in the caches
 	// with the committed state, and what it reads may be uncommitted or an older snapshot. So it
 	// bypasses both caches and never fills them.
-	if ent.TxFromContext(ctx) != nil {
+	if ent.TxFromContext(ctx) != nil || ctx.Value(scheduledSettingsKey{}) == true {
 		sys, err := s.querySystemRow(ctx, key)
 		if err != nil {
 			return "", fmt.Errorf("failed to get system value: %w", err)
