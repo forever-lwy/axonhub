@@ -176,6 +176,12 @@ func unmarshal(v *viper.Viper) (Config, error) {
 		return Config{}, fmt.Errorf("server.max_request_body_size must be greater than zero")
 	}
 
+	basePath, err := server.NormalizeBasePath(config.APIServer.BasePath)
+	if err != nil {
+		return Config{}, err
+	}
+	config.APIServer.BasePath = basePath
+
 	config.APIServer.Safeguards.ClassifierModel = strings.TrimSpace(config.APIServer.Safeguards.ClassifierModel)
 	seenReviewers := map[string]bool{config.APIServer.Safeguards.ClassifierModel: true}
 	for i, model := range config.APIServer.Safeguards.FallbackModels {

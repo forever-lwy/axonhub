@@ -81,7 +81,7 @@ func (srv *Server) newHTTPServer() *http.Server {
 
 	return &http.Server{
 		Addr:         listenAddr(srv.Config.Host, srv.Config.Port),
-		Handler:      srv.Engine,
+		Handler:      mountBasePath(srv.Config.BasePath, srv.Engine),
 		Protocols:    &protocols,
 		ReadTimeout:  srv.Config.ReadTimeout,
 		WriteTimeout: srv.Config.writeTimeout(),

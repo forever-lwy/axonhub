@@ -1,4 +1,4 @@
-// 职责: 验证主服务在同一端口接收 HTTP/1.1 和 h2c 请求，并能完整读取大请求体。
+// 职责: 验证主服务在根路径和配置的前缀下通过同一端口支持 HTTP/1.1 和 h2c，并能完整读取大请求体。
 // 关联文件:
 //   internal/server/server.go
 
@@ -18,7 +18,13 @@ import (
 )
 
 func TestServerHTTPProtocols(t *testing.T) {
-	srv := New(Config{})
+	t.Run("root", func(t *testing.T) { testServerHTTPProtocolsAt(t, "") })
+	t.Run("prefix", func(t *testing.T) { testServerHTTPProtocolsAt(t, "/axonhub") })
+}
+
+func testServerHTTPProtocolsAt(t *testing.T, basePath string) {
+	t.Helper()
+	srv := New(Config{BasePath: basePath})
 	srv.POST("/upload", func(c *gin.Context) {
 		size, err := io.Copy(io.Discard, c.Request.Body)
 		if err != nil {
@@ -48,7 +54,7 @@ func TestServerHTTPProtocols(t *testing.T) {
 			client := &http.Client{Transport: &http.Transport{Protocols: &protocols}, Timeout: 30 * time.Second}
 			t.Cleanup(client.CloseIdleConnections)
 
-			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+"/upload", bytes.NewReader(make([]byte, tc.bodySize)))
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, server.URL+basePath+"/upload", bytes.NewReader(make([]byte, tc.bodySize)))
 			require.NoError(t, err)
 			resp, err := client.Do(req)
 			require.NoError(t, err)
