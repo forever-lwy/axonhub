@@ -1,5 +1,7 @@
 package shared
 
+import "github.com/looplj/axonhub/llm"
+
 // TransformerMetadataKeyGoogleThoughtSignature is the key used to store Gemini thought signature
 // in ToolCall TransformerMetadata.
 const TransformerMetadataKeyGoogleThoughtSignature = "google_thought_signature"
@@ -27,4 +29,17 @@ func DecodeGeminiThoughtSignature(signature *string) *string {
 	}
 
 	return nil
+}
+
+// GeminiReplaySignature keeps native Gemini signatures opaque. Vertex can
+// return signatures without the protobuf envelope used to identify providers
+// when a generic reasoning field is replayed across protocols.
+func GeminiReplaySignature(signature *string, source llm.APIFormat) *string {
+	if signature == nil || *signature == "" {
+		return nil
+	}
+	if source == llm.APIFormatGeminiContents {
+		return signature
+	}
+	return DecodeGeminiThoughtSignature(signature)
 }

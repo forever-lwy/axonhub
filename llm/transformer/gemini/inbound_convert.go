@@ -124,8 +124,12 @@ func convertGeminiToLLMRequest(geminiReq *GenerateContentRequest) (*llm.Request,
 	}
 
 	// Convert contents to messages
+	var pendingCallIDs map[string][]string
 	for i, content := range geminiReq.Contents {
-		converted, err := convertGeminiContentToLLMMessages(content, geminiReq.Contents[:i])
+		if content != nil && content.Role == "model" {
+			pendingCallIDs = unclaimedFunctionCallIDs(content, geminiReq.Contents[i+1:])
+		}
+		converted, err := convertGeminiContentToLLMMessages(content, pendingCallIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -246,7 +250,7 @@ func convertGeminiToLLMRequest(geminiReq *GenerateContentRequest) (*llm.Request,
 	return chatReq, nil
 }
 
-func convertGeminiContentToLLMMessages(content *Content, previousContents []*Content) ([]llm.Message, error) {
+func convertGeminiContentToLLMMessages(content *Content, pendingCallIDs map[string][]string) ([]llm.Message, error) {
 	if content == nil {
 		return nil, nil
 	}
@@ -259,7 +263,7 @@ func convertGeminiContentToLLMMessages(content *Content, previousContents []*Con
 		}
 	}
 	if !hasFunctionResponse || len(content.Parts) == 1 {
-		msg, err := convertGeminiContentToLLMMessage(content, previousContents)
+		msg, err := convertGeminiContentToLLMMessage(content, pendingCallIDs)
 		if err != nil || msg == nil {
 			return nil, err
 		}
@@ -272,7 +276,7 @@ func convertGeminiContentToLLMMessages(content *Content, previousContents []*Con
 		if len(regularParts) == 0 {
 			return nil
 		}
-		msg, err := convertGeminiContentToLLMMessage(&Content{Role: content.Role, Parts: regularParts}, previousContents)
+		msg, err := convertGeminiContentToLLMMessage(&Content{Role: content.Role, Parts: regularParts}, pendingCallIDs)
 		if err != nil {
 			return err
 		}
@@ -294,7 +298,7 @@ func convertGeminiContentToLLMMessages(content *Content, previousContents []*Con
 		if err := flushRegularParts(); err != nil {
 			return nil, err
 		}
-		msg, err := convertGeminiContentToLLMMessage(&Content{Role: content.Role, Parts: []*Part{part}}, previousContents)
+		msg, err := convertGeminiContentToLLMMessage(&Content{Role: content.Role, Parts: []*Part{part}}, pendingCallIDs)
 		if err != nil {
 			return nil, err
 		}
@@ -356,7 +360,7 @@ func convertGeminiThinkingConfigToGeminiOpenAIExtraBody(thinkingConfig *Thinking
 }
 
 // convertGeminiContentToLLMMessage converts a Gemini Content to an LLM Message.
-func convertGeminiContentToLLMMessage(content *Content, previousContents []*Content) (*llm.Message, error) {
+func convertGeminiContentToLLMMessage(content *Content, pendingCallIDs map[string][]string) (*llm.Message, error) {
 	if content == nil || len(content.Parts) == 0 {
 		return nil, nil
 	}
@@ -492,10 +496,11 @@ func convertGeminiContentToLLMMessage(content *Content, previousContents []*Cont
 			// Function response is a separate message in unified format
 			responseJSON, _ := json.Marshal(part.FunctionResponse.Response)
 
-			// If FunctionResponse ID is empty, find the matching function call ID from previous contents
 			functionResponseID := part.FunctionResponse.ID
-			if functionResponseID == "" {
-				functionResponseID = findMatchingFunctionCallID(part.FunctionResponse.Name, previousContents)
+			name := part.FunctionResponse.Name
+			if ids := pendingCallIDs[name]; functionResponseID == "" && len(ids) > 0 {
+				functionResponseID = ids[0]
+				pendingCallIDs[name] = ids[1:]
 			}
 
 			return &llm.Message{
@@ -733,24 +738,32 @@ func convertLLMChoiceToGeminiCandidate(choice *llm.Choice, isStream bool) *Candi
 	return candidate
 }
 
-// findMatchingFunctionCallID searches backwards through previous contents to find the last
-// function call with the given function name and returns its ID.
-func findMatchingFunctionCallID(functionName string, previousContents []*Content) string {
-	// Search from the end to the beginning to find the most recent matching function call
-	for i := len(previousContents) - 1; i >= 0; i-- {
-		content := previousContents[i]
+// Responses without IDs use call order within their model step. Reserve
+// explicit IDs first, even when those responses arrive after unnamed ones.
+func unclaimedFunctionCallIDs(model *Content, following []*Content) map[string][]string {
+	claimed := make(map[string]bool)
+	for _, content := range following {
 		if content == nil {
 			continue
 		}
-
-		// Look through all parts in this content in reverse order to find the most recent function call
-		for j := len(content.Parts) - 1; j >= 0; j-- {
-			part := content.Parts[j]
-			if part.FunctionCall != nil && part.FunctionCall.Name == functionName && part.FunctionCall.ID != "" {
-				return part.FunctionCall.ID
+		if content.Role == "model" {
+			break
+		}
+		for _, part := range content.Parts {
+			if part != nil && part.FunctionResponse != nil && part.FunctionResponse.ID != "" {
+				claimed[part.FunctionResponse.ID] = true
 			}
 		}
 	}
-
-	return ""
+	var pending map[string][]string
+	for _, part := range model.Parts {
+		if part != nil && part.FunctionCall != nil && !claimed[part.FunctionCall.ID] {
+			if pending == nil {
+				pending = make(map[string][]string)
+			}
+			call := part.FunctionCall
+			pending[call.Name] = append(pending[call.Name], call.ID)
+		}
+	}
+	return pending
 }

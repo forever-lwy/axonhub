@@ -385,7 +385,7 @@ func fillGeminiThoughtSignatureForGeminiOpenAIRequest(src *llm.Request, dst *ope
 		for j := range dst.Messages[i].ToolCalls {
 			tc := &dst.Messages[i].ToolCalls[j]
 			if tc.ExtraContent != nil && tc.ExtraContent.Google != nil &&
-				shared.DecodeGeminiThoughtSignature(&tc.ExtraContent.Google.ThoughtSignature) == nil {
+				shared.GeminiReplaySignature(&tc.ExtraContent.Google.ThoughtSignature, src.APIFormat) == nil {
 				tc.ExtraContent = nil
 			}
 		}
@@ -432,7 +432,7 @@ func fillGeminiThoughtSignatureForGeminiOpenAIRequest(src *llm.Request, dst *ope
 				continue
 			}
 
-			signature := shared.DecodeGeminiThoughtSignature(&raw)
+			signature := shared.GeminiReplaySignature(&raw, src.APIFormat)
 			if signature == nil {
 				continue
 			}
@@ -444,7 +444,7 @@ func fillGeminiThoughtSignatureForGeminiOpenAIRequest(src *llm.Request, dst *ope
 			continue
 		}
 
-		if signature := shared.DecodeGeminiThoughtSignature(srcMsg.ReasoningSignature); signature != nil {
+		if signature := shared.GeminiReplaySignature(srcMsg.ReasoningSignature, src.APIFormat); signature != nil {
 			ensureGoogleThoughtSignatureExtraContent(&dst.Messages[i].ToolCalls[0]).ThoughtSignature = *signature
 		}
 	}

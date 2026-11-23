@@ -1287,7 +1287,7 @@ func TestConvertLLMMessageToGeminiContent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertLLMMessageToGeminiContent(tt.input)
+			result := convertLLMMessageToGeminiContent(tt.input, "")
 			tt.validate(t, result)
 		})
 	}
@@ -2161,7 +2161,7 @@ func TestConvertLLMMessageToGeminiContent_ThoughtSignature(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := convertLLMMessageToGeminiContent(tt.input)
+			result := convertLLMMessageToGeminiContent(tt.input, "")
 			tt.validate(t, result)
 		})
 	}
