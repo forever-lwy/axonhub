@@ -272,6 +272,34 @@ func TestTransformStreamAssignsDistinctToolCallIndexAcrossChunks(t *testing.T) {
 	require.NotEqual(t, calls[0].ID, calls[1].ID)
 }
 
+func TestTransformStreamFinishReasonOnlyOnDoneChunk(t *testing.T) {
+	ollamaTransformer, err := NewOutboundTransformerWithConfig(&Config{BaseURL: "http://localhost:11434"})
+	require.NoError(t, err)
+
+	transformer, ok := ollamaTransformer.(*OutboundTransformer)
+	require.True(t, ok)
+
+	chunks := []*httpclient.StreamEvent{
+		{Data: []byte(`{"model":"qwen3","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"get_weather","arguments":{"location":"Paris"}}}]},"done":false}`)},
+		{Data: []byte(`{"model":"qwen3","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop"}`)},
+	}
+
+	out, err := transformer.TransformStream(context.Background(), nil, streams.SliceStream(chunks))
+	require.NoError(t, err)
+
+	var finishes []*string
+
+	for out.Next() {
+		finishes = append(finishes, out.Current().Choices[0].FinishReason)
+	}
+
+	require.NoError(t, out.Err())
+	require.Len(t, finishes, 2)
+	require.Nil(t, finishes[0], "finish_reason must not be sent before the done chunk")
+	require.NotNil(t, finishes[1])
+	require.Equal(t, "tool_calls", *finishes[1])
+}
+
 func TestAggregateStreamChunksKeepsToolCallsFromAllChunks(t *testing.T) {
 	ollamaTransformer, err := NewOutboundTransformerWithConfig(&Config{BaseURL: "http://localhost:11434"})
 	require.NoError(t, err)
@@ -296,4 +324,29 @@ func TestAggregateStreamChunksKeepsToolCallsFromAllChunks(t *testing.T) {
 	require.Equal(t, "get_weather", calls[0].Function.Name)
 	require.Equal(t, "get_time", calls[1].Function.Name)
 	require.NotEqual(t, calls[0].ID, calls[1].ID)
+}
+
+func TestTransformRequestMapsSeedAndPenalties(t *testing.T) {
+	transformer, err := NewOutboundTransformerWithConfig(&Config{
+		BaseURL: "http://localhost:11434",
+	})
+	require.NoError(t, err)
+
+	req, err := transformer.TransformRequest(context.Background(), &llm.Request{
+		Model:            "qwen3.5:4b-q4_K_M",
+		Messages:         []llm.Message{{Role: "user", Content: llm.MessageContent{Content: lo.ToPtr("hi")}}},
+		Seed:             lo.ToPtr(int64(42)),
+		FrequencyPenalty: lo.ToPtr(0.5),
+		PresencePenalty:  lo.ToPtr(0.25),
+	})
+	require.NoError(t, err)
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(req.Body, &body))
+
+	opts, ok := body["options"].(map[string]any)
+	require.True(t, ok, "options must be present")
+	require.EqualValues(t, 42, opts["seed"])
+	require.EqualValues(t, 0.5, opts["frequency_penalty"])
+	require.EqualValues(t, 0.25, opts["presence_penalty"])
 }

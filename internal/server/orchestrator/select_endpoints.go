@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"slices"
 
 	"github.com/looplj/axonhub/internal/log"
 	"github.com/looplj/axonhub/internal/objects"
@@ -29,15 +30,41 @@ func selectForcedAPIFormat(endpoints []objects.ChannelEndpoint, req *llm.Request
 }
 
 func selectEndpointAPIFormat(
+	ctx context.Context,
+	ch *biz.Channel,
 	endpoints []objects.ChannelEndpoint,
 	req *llm.Request,
 	forced bool,
 ) string {
+	// Match the actual parent protocol only among the reviewer model's
+	// eligible endpoints. Otherwise use the ordinary endpoint selection.
+	if parentFormat := guardianReviewParentAPIFormat(ctx); parentFormat != "" {
+		if _, capable := llm.CapableAPIFormats(req.RequestType)[parentFormat]; capable {
+			for _, endpoint := range endpoints {
+				if endpoint.APIFormat == parentFormat {
+					return parentFormat
+				}
+			}
+		}
+	}
 	if forced {
 		return selectForcedAPIFormat(endpoints, req)
 	}
 
-	return SelectAPIFormat(endpoints, req)
+	format := SelectAPIFormat(endpoints, req)
+	if format != llm.APIFormatOpenAIResponse.String() || req.RequestType != llm.RequestTypeChat ||
+		ch.Settings == nil || !ch.Settings.PreferResponsesWebSocket {
+		return format
+	}
+
+	webSocketFormat := llm.APIFormatOpenAIResponseWebSocket.String()
+	if slices.ContainsFunc(endpoints, func(ep objects.ChannelEndpoint) bool {
+		return ep.APIFormat == webSocketFormat
+	}) {
+		return webSocketFormat
+	}
+
+	return format
 }
 
 func selectAPIFormat(

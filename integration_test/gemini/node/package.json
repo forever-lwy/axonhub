@@ -11,6 +11,11 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
-    "@google/genai": "^2.30.0"
+    "@google/genai": "^3.6.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "gaxios@7>rimraf": "^6.1.4"
+    }
   }
 }

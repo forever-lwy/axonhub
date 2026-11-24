@@ -356,7 +356,11 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		verifyResponsesAttempt(outbound),
 		finalizeTransportRequest(outbound),
 		applyGeminiHistorySignatures(outbound),
-
+	)
+	if link, ok := ctx.Value(guardianLinkageKey{}).(guardianLinkage); ok {
+		middlewares = append(middlewares, &guardianLinkageMiddleware{link: link, outbound: outbound})
+	}
+	middlewares = append(middlewares,
 		// Unified performance tracking middleware.
 		withoutResponsesRecoveryPenalty(withPerformanceRecording(outbound)),
 

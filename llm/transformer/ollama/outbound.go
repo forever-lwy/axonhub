@@ -86,6 +86,10 @@ type Options struct {
 	NumCtx      *int     `json:"num_ctx,omitempty"`
 	NumPredict  *int     `json:"num_predict,omitempty"`
 	Stop        []string `json:"stop,omitempty"`
+
+	Seed             *int     `json:"seed,omitempty"`
+	FrequencyPenalty *float64 `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64 `json:"presence_penalty,omitempty"`
 }
 
 type ChatResponse struct {
@@ -304,6 +308,31 @@ func (t *OutboundTransformer) buildOptions(llmReq *llm.Request) *Options {
 		opts.TopP = llmReq.TopP
 	}
 
+	if llmReq.Seed != nil {
+		if opts == nil {
+			opts = &Options{}
+		}
+
+		seed := int(*llmReq.Seed)
+		opts.Seed = &seed
+	}
+
+	if llmReq.FrequencyPenalty != nil {
+		if opts == nil {
+			opts = &Options{}
+		}
+
+		opts.FrequencyPenalty = llmReq.FrequencyPenalty
+	}
+
+	if llmReq.PresencePenalty != nil {
+		if opts == nil {
+			opts = &Options{}
+		}
+
+		opts.PresencePenalty = llmReq.PresencePenalty
+	}
+
 	if llmReq.MaxTokens != nil {
 		if opts == nil {
 			opts = &Options{}
@@ -500,21 +529,24 @@ func (t *OutboundTransformer) transformStreamChunk(_ context.Context, event *htt
 					ToolCalls:        toolCalls,
 				},
 				FinishReason: func() *string {
-					if len(toolCalls) > 0 {
+					if !ollamaResp.Done {
+						return nil
+					}
+
+					// Ollama reports done_reason "stop" even when the stream carried
+					// tool calls (possibly in an earlier chunk), so use the counter.
+					if *toolCallOffset > 0 {
 						reason := "tool_calls"
 						return &reason
 					}
 
-					if ollamaResp.Done && ollamaResp.DoneReason != "" {
+					if ollamaResp.DoneReason != "" {
 						return &ollamaResp.DoneReason
 					}
 
-					if ollamaResp.Done {
-						reason := "stop"
-						return &reason
-					}
+					reason := "stop"
 
-					return nil
+					return &reason
 				}(),
 			},
 		},

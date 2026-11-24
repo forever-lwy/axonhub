@@ -20,7 +20,11 @@ import (
 	"github.com/looplj/axonhub/internal/ent/model"
 	"github.com/looplj/axonhub/internal/ent/oidcidentity"
 	"github.com/looplj/axonhub/internal/ent/plugin"
+	"github.com/looplj/axonhub/internal/ent/pluginschedule"
+	"github.com/looplj/axonhub/internal/ent/pluginschedulerun"
 	"github.com/looplj/axonhub/internal/ent/pluginstorage"
+	"github.com/looplj/axonhub/internal/ent/plugintableoperation"
+	"github.com/looplj/axonhub/internal/ent/plugintablestorage"
 	"github.com/looplj/axonhub/internal/ent/predicate"
 	"github.com/looplj/axonhub/internal/ent/project"
 	"github.com/looplj/axonhub/internal/ent/prompt"
@@ -420,6 +424,60 @@ func (f TraversePlugin) Traverse(ctx context.Context, q ent.Query) error {
 	return fmt.Errorf("unexpected query type %T. expect *ent.PluginQuery", q)
 }
 
+// The PluginScheduleFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginScheduleFunc func(context.Context, *ent.PluginScheduleQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginScheduleFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginScheduleQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginScheduleQuery", q)
+}
+
+// The TraversePluginSchedule type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginSchedule func(context.Context, *ent.PluginScheduleQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginSchedule) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginSchedule) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginScheduleQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginScheduleQuery", q)
+}
+
+// The PluginScheduleRunFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginScheduleRunFunc func(context.Context, *ent.PluginScheduleRunQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginScheduleRunFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginScheduleRunQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginScheduleRunQuery", q)
+}
+
+// The TraversePluginScheduleRun type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginScheduleRun func(context.Context, *ent.PluginScheduleRunQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginScheduleRun) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginScheduleRun) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginScheduleRunQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginScheduleRunQuery", q)
+}
+
 // The PluginStorageFunc type is an adapter to allow the use of ordinary function as a Querier.
 type PluginStorageFunc func(context.Context, *ent.PluginStorageQuery) (ent.Value, error)
 
@@ -445,6 +503,60 @@ func (f TraversePluginStorage) Traverse(ctx context.Context, q ent.Query) error 
 		return f(ctx, q)
 	}
 	return fmt.Errorf("unexpected query type %T. expect *ent.PluginStorageQuery", q)
+}
+
+// The PluginTableOperationFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginTableOperationFunc func(context.Context, *ent.PluginTableOperationQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginTableOperationFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginTableOperationQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginTableOperationQuery", q)
+}
+
+// The TraversePluginTableOperation type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginTableOperation func(context.Context, *ent.PluginTableOperationQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginTableOperation) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginTableOperation) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginTableOperationQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginTableOperationQuery", q)
+}
+
+// The PluginTableStorageFunc type is an adapter to allow the use of ordinary function as a Querier.
+type PluginTableStorageFunc func(context.Context, *ent.PluginTableStorageQuery) (ent.Value, error)
+
+// Query calls f(ctx, q).
+func (f PluginTableStorageFunc) Query(ctx context.Context, q ent.Query) (ent.Value, error) {
+	if q, ok := q.(*ent.PluginTableStorageQuery); ok {
+		return f(ctx, q)
+	}
+	return nil, fmt.Errorf("unexpected query type %T. expect *ent.PluginTableStorageQuery", q)
+}
+
+// The TraversePluginTableStorage type is an adapter to allow the use of ordinary function as Traverser.
+type TraversePluginTableStorage func(context.Context, *ent.PluginTableStorageQuery) error
+
+// Intercept is a dummy implementation of Intercept that returns the next Querier in the pipeline.
+func (f TraversePluginTableStorage) Intercept(next ent.Querier) ent.Querier {
+	return next
+}
+
+// Traverse calls f(ctx, q).
+func (f TraversePluginTableStorage) Traverse(ctx context.Context, q ent.Query) error {
+	if q, ok := q.(*ent.PluginTableStorageQuery); ok {
+		return f(ctx, q)
+	}
+	return fmt.Errorf("unexpected query type %T. expect *ent.PluginTableStorageQuery", q)
 }
 
 // The ProjectFunc type is an adapter to allow the use of ordinary function as a Querier.
@@ -906,8 +1018,16 @@ func NewQuery(q ent.Query) (Query, error) {
 		return &query[*ent.OIDCIdentityQuery, predicate.OIDCIdentity, oidcidentity.OrderOption]{typ: ent.TypeOIDCIdentity, tq: q}, nil
 	case *ent.PluginQuery:
 		return &query[*ent.PluginQuery, predicate.Plugin, plugin.OrderOption]{typ: ent.TypePlugin, tq: q}, nil
+	case *ent.PluginScheduleQuery:
+		return &query[*ent.PluginScheduleQuery, predicate.PluginSchedule, pluginschedule.OrderOption]{typ: ent.TypePluginSchedule, tq: q}, nil
+	case *ent.PluginScheduleRunQuery:
+		return &query[*ent.PluginScheduleRunQuery, predicate.PluginScheduleRun, pluginschedulerun.OrderOption]{typ: ent.TypePluginScheduleRun, tq: q}, nil
 	case *ent.PluginStorageQuery:
 		return &query[*ent.PluginStorageQuery, predicate.PluginStorage, pluginstorage.OrderOption]{typ: ent.TypePluginStorage, tq: q}, nil
+	case *ent.PluginTableOperationQuery:
+		return &query[*ent.PluginTableOperationQuery, predicate.PluginTableOperation, plugintableoperation.OrderOption]{typ: ent.TypePluginTableOperation, tq: q}, nil
+	case *ent.PluginTableStorageQuery:
+		return &query[*ent.PluginTableStorageQuery, predicate.PluginTableStorage, plugintablestorage.OrderOption]{typ: ent.TypePluginTableStorage, tq: q}, nil
 	case *ent.ProjectQuery:
 		return &query[*ent.ProjectQuery, predicate.Project, project.OrderOption]{typ: ent.TypeProject, tq: q}, nil
 	case *ent.PromptQuery:

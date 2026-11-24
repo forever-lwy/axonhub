@@ -152,6 +152,7 @@ Fields use camelCase. A field that is not open is rejected at install and is not
 | `pluginApiVersion` | yes | `1` |
 | `permissions` | no | Names from the list below. Omitted means `[]` |
 | `network` | no | At most 32 rules. Omitted means `[]` |
+| `tasks` | No | See scheduled tasks below |
 | `events` | no | Names from the eight events above. A non-empty list requires `export function onEvent` |
 | `hooks.request` | no | Object: enabled is required; true requires non-empty requestTypes and an onRequest export; false keeps configuration without running it |
 | `hooks.attempt` | no | Object: enabled is required; true requires non-empty apiFormats and an onAttempt export; false keeps configuration without running it |
@@ -160,7 +161,7 @@ Fields use camelCase. A field that is not open is rejected at install and is not
 | `ui.pages` | no | Sidebar pages, described below |
 | `ui.actions` | no | Global toolbar actions that open plugin dialogs |
 
-Open permissions: `read_channels`, `read_requests`, `read_dashboard`, `read_api_keys`, `read_projects`, `read_settings`, `write_channels`, `webhook`. Outbound URLs go in `network`. `read_plugins` and `write_plugins` are user scopes, not plugin permissions. KV is not a permission.
+Open permissions: `read_channels`, `read_requests`, `read_dashboard`, `read_api_keys`, `read_projects`, `read_settings`, `write_channels`, `webhook`, `sql`. Outbound URLs go in `network`. `read_plugins` and `write_plugins` are user scopes, not plugin permissions. KV is not a permission.
 
 A `network` entry is either an exact `https` URL or `{ "regex": "^https://api\\.example\\.com/v1/items/[0-9]+$" }`. An exact URL includes a path and no userinfo, query, or fragment, and it matches that path only. A regex is a full match, at most 256 characters, against the URL with query and fragment removed. The request may still carry a query. Redirects are not followed: statuses 301, 302, 303, 307, and 308 reject both `ctx.fetch` and `axonhub.fetch` Promises with `INVALID_STATE`.
 
@@ -246,6 +247,111 @@ Plugins run in ascending priority; new installations default to 100. Each attemp
 Pass-through can overwrite non-model edits from onRequest, recorded in overriddenByPassThrough and a warning. onAttempt runs after pass-through, so its replace/patch takes effect. Channel overrides run next and win on matching fields. Editing a pass-through body with attempt does not require disabling pass-through.
 
 ctx.request uses camelCase: projectId, apiKeyId, model, requestType, and apiFormat, captured at middleware entry; Playground uses a null apiKeyId. ctx.attempt exists only on onAttempt and includes channel (id, name, type), the actual model, and outbound apiFormat, with no credentials. The body need not contain model; read ctx.attempt.model instead. This interface does not expose URL, method, HTTP header, or credential edits.
+
+## Managed tables
+
+Declare tables in `manifest.json` and request the `tables` permission. AxonHub
+creates the physical tables on enable and resolves their names from the current
+installation. The same manifest ID resumes its existing data automatically after
+reinstall. Uninstall retains managed table data by default. Select **Also
+permanently delete managed table data** to clear it.
+
+Physical names use the `axp_` prefix, for example `axp_42_daily_usage`.
+Plugin code uses the declared name `daily_usage`. On MySQL and TiDB, table
+migrations and purges require at least two primary database connections.
+
+```json
+{
+  "permissions": ["tables"],
+  "tables": {
+    "daily_usage": {
+      "columns": {
+        "day": { "type": "string", "maxLength": 10 },
+        "requests": { "type": "integer" }
+      },
+      "indexes": [{ "columns": ["day"], "unique": true }]
+    }
+  }
+}
+```
+
+```js
+const usage = ctx.tables.open("daily_usage")
+usage.upsert({ conflict: ["day"], row: { day: "2026-11-23", requests: 42 } })
+const page = usage.list({
+  where: [{ column: "day", op: "gte", value: "2026-11-01" }],
+  orderBy: [{ column: "day", direction: "desc" }],
+  first: 30
+})
+```
+
+- Each row has a host-assigned integer `id`. Use `insert(row)`, `get(id)`,
+  `update(id, patch)`, `delete(id)` or `upsert({ conflict, row })`. Upsert's
+  conflict columns must match a declared unique index in order. Get and update
+  return `null` for missing rows, and delete returns a boolean.
+- `list({ where, orderBy, first, after })` returns `{ rows, nextCursor }`. Pass
+  the cursor back with the same filters and ordering. Filters are combined with
+  AND and support `eq`, `lt`, `lte`, `gt`, `gte`. Ordering uses non-nullable
+  columns and adds the primary key to break ties. Pages default to 50 rows and
+  allow up to 100.
+- Column types are `string`, `text`, `integer`, `number` and `boolean`.
+  Strings require `maxLength`. Columns are required unless declared `nullable`.
+  Integers outside JavaScript's safe range use decimal strings. An upgrade can
+  add tables, nullable columns and ordinary indexes. Unique indexes can be
+  declared on new tables.
+- Tables are accessible with `tables` alone. Raw `sql` keeps its existing
+  full-database access. The managed API bounds argument size, result size, write
+  rate and execution time.
+
+Plugin pages can open the same managed table with `window.axonhub.tables.open("daily_usage")`.
+Method names, arguments, and result values match `ctx.tables`, with each page operation returning a Promise.
+The plugin must have the `tables` grant, and the caller must be an Owner or have `write_plugins`.
+See the [to-do list example](../../../plugins/examples/table-todos/README.md) for the page flow.
+
+## Scheduled tasks and dynamic SQL
+
+A manifest can declare scheduled tasks and the `sql` permission. This example shows the two fields and their JavaScript entry point.
+
+```json
+{
+  "permissions": ["sql"],
+  "tasks": {
+    "daily-count": {
+      "schedule": { "cron": "0 2 * * *", "timezone": "Asia/Shanghai" }
+    }
+  }
+}
+```
+
+```js
+export function onTask(ctx, run) {
+  if (run.key !== "daily-count") return;
+  const end = run.scheduledAt ?? new Date().toISOString();
+  const start = new Date(Date.parse(end) - 86_400_000).toISOString();
+  const placeholder = ctx.sql.dialect === "postgres" ? "$1" : "?";
+  const { rows } = ctx.sql.query(
+    "SELECT COUNT(*) AS total FROM requests WHERE created_at >= " + placeholder,
+    [start]
+  );
+  ctx.log.info("Request count", { total: rows[0][0] });
+}
+```
+
+### Scheduled tasks
+
+A plugin can declare up to 16 tasks, keyed by task ID. Each `schedule` requires a five-field `cron` expression and accepts an optional IANA `timezone` (UTC by default). The host calls `onTask(ctx, { key, runId, trigger, scheduledAt })`. The trigger is `scheduled` or `manual`. Manual runs receive `null` for `scheduledAt`.
+
+The plugin details show the next trigger and the last 20 runs. Owners can pause automatic triggers, change the schedule, and run a task on demand. Instances share the database claim record. The scheduler claims a slot at most once and skips missed minutes or ticks while an earlier run is active. A task has a 30-second deadline. A running task can finish across upgrades while it remains declared and the plugin stays active. Disabling the plugin or removing the task cancels its run. Unfinished runs show an unknown outcome after the instance exits and its lease expires.
+
+Upgrade every replica before installing a plugin that declares `tasks`.
+
+### Dynamic SQL
+
+An Owner can grant `sql` to give `plugin.js` **all SQL privileges of the AxonHub primary database account**, including reads, writes, and DDL. This includes access to credentials and metadata visible to that account. Owner access is required to configure a plugin with this grant. The host checks the current activation status and grant before each call.
+
+`ctx.sql.query(statement, params?)` returns `{ columns, rows }`, with rows represented by arrays in column order. `ctx.sql.exec(statement, params?)` returns `{ rowsAffected }`. Both methods use the same grant and accept SQL generated at runtime. Bound values can be numbers, strings, booleans, or null. Integers beyond JavaScript’s safe range are decimal strings, and binary values are Base64 strings.
+
+Use the database dialect and its native placeholders. Calls have a 10-second deadline, and query results are limited to 1,000 rows and 1 MiB. Each call obtains its own connection. Complete any transaction within one call.
 
 ## Server middleware
 
@@ -563,15 +669,17 @@ The owner enables a plugin with a subset of `permissions` and a subset of `netwo
 
 ## Publishing
 
-AxonHub reads the [community plugin index](https://raw.githubusercontent.com/looplj/axonhub-plugins/main/registry.json). The index updates independently of AxonHub releases. Development examples live in the AxonHub repository.
+AxonHub reads the [community plugin index](https://raw.githubusercontent.com/looplj/axonhub-plugins/main/registry.json). The index updates independently of AxonHub releases.
 
-To submit plugin source for centralized packaging and release, open a pull request under `plugins/` in [axonhub-plugins](https://github.com/looplj/axonhub-plugins). If you maintain your plugin in a separate repository, publish the zip at an HTTPS URL, such as a GitHub Release. Compute `sha256` as 64 lowercase hex characters of the raw zip bytes:
+For centralized packaging and release, submit the source under [`plugins/community/`](../../../plugins/community/) in AxonHub and bump the plugin version in `manifest.json`. After the change merges to `unstable`, AxonHub sends a `community-plugins` event to [axonhub-plugins](https://github.com/looplj/axonhub-plugins) with that commit SHA. The workflow there checks out the commit, packages new versions, creates tags and GitHub Releases, and updates the market index.
+
+If you maintain your plugin in a separate repository, publish the zip at an HTTPS URL, such as a GitHub Release. Compute `sha256` as 64 lowercase hex characters of the raw zip bytes:
 
 ```bash
 shasum -a 256 temperature-cap-1.0.0.axplugin
 ```
 
-To list a plugin maintained separately, open a pull request in [axonhub-plugins](https://github.com/looplj/axonhub-plugins) that adds a plugin object to the `plugins` array in `external-plugins.json`. Each `versions` item needs `version`, `url`, `sha256`, and `axonhubVersion`:
+To list a plugin maintained separately, open a pull request in [axonhub-plugins](https://github.com/looplj/axonhub-plugins) that adds a plugin object to the `plugins` array in `external-plugins.json`. Merging it to `main` rewrites the index from that file. Each `versions` item needs `version`, `url`, `sha256`, and `axonhubVersion`:
 
 ```json
 {

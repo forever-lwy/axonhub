@@ -118,6 +118,9 @@ func (handlers *ChatCompletionHandlers) ChatCompletionWithRequest(c *gin.Context
 	}
 	genericReq = prepared
 
+	if evaluator != nil {
+		ctx = orchestrator.WithSafeguardsParent(ctx)
+	}
 	keepAlive := handlers.preparationKeepAlive(genericReq)
 	heartbeat := newSSEHeartbeatState(keepAlive)
 	processCtx := ctx

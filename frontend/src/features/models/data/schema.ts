@@ -26,6 +26,8 @@ export const modelCostSchema = z.object({
   cacheWrite: z.number().optional(),
 });
 export type ModelCost = z.infer<typeof modelCostSchema>;
+export const referencePriceFields = modelCostSchema.keyof().options;
+export type ReferencePriceField = keyof ModelCost;
 
 export const modelLimitSchema = z.object({
   context: z.number(),
@@ -157,6 +159,8 @@ export const modelSchema = z.object({
   id: z.string(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  editVersion: z.string().optional(),
+  missingReferencePrices: z.array(z.string()).optional(),
   developer: z.string(),
   modelID: z.string(),
   type: modelTypeSchema,

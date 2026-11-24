@@ -430,6 +430,58 @@ var (
 			},
 		},
 	}
+	// PluginSchedulesColumns holds the columns for the "plugin_schedules" table.
+	PluginSchedulesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "installation_id", Type: field.TypeInt},
+		{Name: "key", Type: field.TypeString, Size: 32},
+		{Name: "override_cron", Type: field.TypeString, Size: 128, Default: ""},
+		{Name: "override_timezone", Type: field.TypeString, Size: 64, Default: ""},
+		{Name: "paused", Type: field.TypeBool, Default: false},
+		{Name: "last_slot", Type: field.TypeInt64, Default: 0},
+		{Name: "active_run_id", Type: field.TypeInt, Default: 0},
+		{Name: "lease_until", Type: field.TypeInt64, Default: 0},
+	}
+	// PluginSchedulesTable holds the schema information for the "plugin_schedules" table.
+	PluginSchedulesTable = &schema.Table{
+		Name:       "plugin_schedules",
+		Columns:    PluginSchedulesColumns,
+		PrimaryKey: []*schema.Column{PluginSchedulesColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "plugin_schedules_by_installation_key",
+				Unique:  true,
+				Columns: []*schema.Column{PluginSchedulesColumns[1], PluginSchedulesColumns[2]},
+			},
+		},
+	}
+	// PluginScheduleRunsColumns holds the columns for the "plugin_schedule_runs" table.
+	PluginScheduleRunsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "schedule_id", Type: field.TypeInt},
+		{Name: "scheduled_at", Type: field.TypeTime, Nullable: true},
+		{Name: "started_at", Type: field.TypeTime},
+		{Name: "finished_at", Type: field.TypeTime, Nullable: true},
+		{Name: "status", Type: field.TypeString, Size: 16},
+	}
+	// PluginScheduleRunsTable holds the schema information for the "plugin_schedule_runs" table.
+	PluginScheduleRunsTable = &schema.Table{
+		Name:       "plugin_schedule_runs",
+		Columns:    PluginScheduleRunsColumns,
+		PrimaryKey: []*schema.Column{PluginScheduleRunsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "plugin_schedule_runs_by_schedule_slot",
+				Unique:  true,
+				Columns: []*schema.Column{PluginScheduleRunsColumns[1], PluginScheduleRunsColumns[2]},
+			},
+			{
+				Name:    "plugin_schedule_runs_by_schedule_id",
+				Unique:  false,
+				Columns: []*schema.Column{PluginScheduleRunsColumns[1], PluginScheduleRunsColumns[0]},
+			},
+		},
+	}
 	// PluginStoragesColumns holds the columns for the "plugin_storages" table.
 	PluginStoragesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
@@ -453,6 +505,50 @@ var (
 				Columns: []*schema.Column{PluginStoragesColumns[3], PluginStoragesColumns[4], PluginStoragesColumns[5]},
 			},
 		},
+	}
+	// PluginTableOperationsColumns holds the columns for the "plugin_table_operations" table.
+	PluginTableOperationsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "storage_id", Type: field.TypeInt},
+		{Name: "kind", Type: field.TypeString, Size: 16},
+		{Name: "tables", Type: field.TypeJSON},
+		{Name: "names", Type: field.TypeJSON},
+		{Name: "package_sha", Type: field.TypeString, Size: 64, Default: ""},
+		{Name: "last_error", Type: field.TypeString, Size: 512, Default: ""},
+		{Name: "retry_at", Type: field.TypeInt64, Default: 0},
+	}
+	// PluginTableOperationsTable holds the schema information for the "plugin_table_operations" table.
+	PluginTableOperationsTable = &schema.Table{
+		Name:       "plugin_table_operations",
+		Columns:    PluginTableOperationsColumns,
+		PrimaryKey: []*schema.Column{PluginTableOperationsColumns[0]},
+		Indexes: []*schema.Index{
+			{
+				Name:    "plugin_table_operations_by_storage_kind",
+				Unique:  true,
+				Columns: []*schema.Column{PluginTableOperationsColumns[1], PluginTableOperationsColumns[2]},
+			},
+			{
+				Name:    "plugin_table_operations_by_kind_retry",
+				Unique:  false,
+				Columns: []*schema.Column{PluginTableOperationsColumns[2], PluginTableOperationsColumns[7], PluginTableOperationsColumns[0]},
+			},
+		},
+	}
+	// PluginTableStoragesColumns holds the columns for the "plugin_table_storages" table.
+	PluginTableStoragesColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "plugin_id", Type: field.TypeString, Size: 64},
+		{Name: "active_plugin_id", Type: field.TypeString, Unique: true, Nullable: true, Size: 64},
+		{Name: "tables", Type: field.TypeJSON},
+		{Name: "names", Type: field.TypeJSON},
+		{Name: "revision", Type: field.TypeInt, Default: 0},
+	}
+	// PluginTableStoragesTable holds the schema information for the "plugin_table_storages" table.
+	PluginTableStoragesTable = &schema.Table{
+		Name:       "plugin_table_storages",
+		Columns:    PluginTableStoragesColumns,
+		PrimaryKey: []*schema.Column{PluginTableStoragesColumns[0]},
 	}
 	// ProjectsColumns holds the columns for the "projects" table.
 	ProjectsColumns = []*schema.Column{
@@ -1207,7 +1303,11 @@ var (
 		ModelsTable,
 		OidcIdentitiesTable,
 		PluginsTable,
+		PluginSchedulesTable,
+		PluginScheduleRunsTable,
 		PluginStoragesTable,
+		PluginTableOperationsTable,
+		PluginTableStoragesTable,
 		ProjectsTable,
 		PromptsTable,
 		PromptProtectionRulesTable,

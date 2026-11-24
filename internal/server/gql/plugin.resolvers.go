@@ -128,7 +128,7 @@ func (r *mutationResolver) UpdatePluginSettings(ctx context.Context, id objects.
 }
 
 // DeletePlugin is the resolver for the deletePlugin field.
-func (r *mutationResolver) DeletePlugin(ctx context.Context, id objects.GUID) (bool, error) {
+func (r *mutationResolver) DeletePlugin(ctx context.Context, id objects.GUID, purgeTables *bool) (bool, error) {
 	if err := requirePluginOwner(ctx); err != nil {
 		return false, err
 	}
@@ -140,10 +140,50 @@ func (r *mutationResolver) DeletePlugin(ctx context.Context, id objects.GUID) (b
 	if err != nil {
 		return false, err
 	}
-	if err := manager.Delete(ctx, rowID); err != nil {
+	if err := manager.DeleteWithTables(ctx, rowID, lo.FromPtr(purgeTables)); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// UpdatePluginTask is the resolver for the updatePluginTask field.
+func (r *mutationResolver) UpdatePluginTask(ctx context.Context, id objects.GUID, key string, paused bool, cron *string, timezone *string) (*PluginTaskState, error) {
+	if err := requirePluginOwner(ctx); err != nil {
+		return nil, err
+	}
+	manager, err := r.pluginManagerOrErr()
+	if err != nil {
+		return nil, err
+	}
+	rowID, err := pluginRowID(id)
+	if err != nil {
+		return nil, err
+	}
+	state, err := manager.UpdateTask(ctx, rowID, key, paused, cron, timezone)
+	if err != nil {
+		return nil, err
+	}
+	return presentPluginTask(state), nil
+}
+
+// RunPluginTask is the resolver for the runPluginTask field.
+func (r *mutationResolver) RunPluginTask(ctx context.Context, id objects.GUID, key string) (*PluginTaskExecution, error) {
+	if err := requirePluginOwner(ctx); err != nil {
+		return nil, err
+	}
+	manager, err := r.pluginManagerOrErr()
+	if err != nil {
+		return nil, err
+	}
+	rowID, err := pluginRowID(id)
+	if err != nil {
+		return nil, err
+	}
+	run, err := manager.RunTask(ctx, rowID, key)
+	if err != nil {
+		return nil, err
+	}
+	return presentPluginTaskRun(run), nil
 }
 
 // SetPluginKv is the resolver for the setPluginKV field.
@@ -176,6 +216,15 @@ func (r *mutationResolver) DeletePluginKv(ctx context.Context, namespace *string
 		return false, err
 	}
 	return manager.KVDelete(ctx, call.ManifestID, call.InstallationID, lo.FromPtr(namespace), key)
+}
+
+// PluginTableOperation is the resolver for the pluginTableOperation field.
+func (r *mutationResolver) PluginTableOperation(ctx context.Context, table string, operation PluginTableCommand, args []objects.JSONRawMessage) (objects.JSONRawMessage, error) {
+	manager, err := r.pluginManagerOrErr()
+	if err != nil {
+		return nil, err
+	}
+	return manager.RunUITableOperation(ctx, table, string(operation), args)
 }
 
 // CreatePluginUISession is the resolver for the createPluginUISession field.
@@ -229,6 +278,28 @@ func (r *queryResolver) PluginMarket(ctx context.Context) ([]*plugin.MarketEntry
 		return nil, err
 	}
 	return manager.MarketCatalog(ctx)
+}
+
+// PluginTasks is the resolver for the pluginTasks field.
+func (r *queryResolver) PluginTasks(ctx context.Context, id objects.GUID) ([]*PluginTaskState, error) {
+	if err := requirePluginRead(ctx); err != nil {
+		return nil, err
+	}
+	manager, err := r.pluginManagerOrErr()
+	if err != nil {
+		return nil, err
+	}
+	rowID, err := pluginRowID(id)
+	if err != nil {
+		return nil, err
+	}
+	states, err := manager.ListTasks(ctx, rowID)
+	if err != nil {
+		return nil, err
+	}
+	return lo.Map(states, func(state plugin.TaskState, _ int) *PluginTaskState {
+		return presentPluginTask(state)
+	}), nil
 }
 
 // PluginKv is the resolver for the pluginKV field.
