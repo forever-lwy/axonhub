@@ -640,7 +640,7 @@ test.describe('Admin Channels Management', () => {
     }
   })
 
-  test('can open model mapping dialog', async ({ page }) => {
+  test('can open model mapping and use row actions again after closing it', async ({ page }) => {
     // Wait for table to load
     await page.waitForTimeout(2000)
 
@@ -669,22 +669,26 @@ test.describe('Admin Channels Management', () => {
     await actionsTrigger.click()
 
     const menu = page.getByRole('menu')
+    const body = page.locator('body')
     await expect(menu).toBeVisible()
+    await expect(body).not.toHaveCSS('pointer-events', 'none')
 
-    // Look for model mapping option - uses i18n key channels.dialogs.settings.modelMapping.title
     const modelMappingOption = menu.getByRole('menuitem', {
       name: /模型映射|Model Mapping|模型别名|Model Alias/i,
     })
-    const modelMappingCount = await modelMappingOption.count()
+    await modelMappingOption.click()
 
-    if (modelMappingCount > 0) {
-      await modelMappingOption.click()
+    const modelMappingDialog = page.getByRole('dialog', { name: /模型映射|Model Mapping|模型别名|Model Alias/i })
+    await expect(modelMappingDialog).toBeVisible()
+    await expect(menu).not.toBeVisible()
+    await expect(body).toHaveCSS('pointer-events', 'none')
 
-      // Verify model mapping dialog opens
-      const modelMappingDialog = page.getByRole('dialog')
-      await expect(modelMappingDialog).toBeVisible()
-      await expect(modelMappingDialog).toContainText(/模型映射|Model Mapping|模型别名|Model Alias/i)
-    }
+    await page.keyboard.press('Escape')
+    await expect(modelMappingDialog).not.toBeVisible()
+    await expect(body).not.toHaveCSS('pointer-events', 'none')
+
+    await actionsTrigger.click()
+    await expect(menu).toBeVisible()
   })
 
   test('can open override parameters dialog', async ({ page }) => {

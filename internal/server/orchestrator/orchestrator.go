@@ -253,6 +253,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 
 	state := &PersistenceState{
 		ResponsesContinuation: continuation,
+		StreamResponseHeaders: streamResponseHeadersFromContext(ctx),
 		APIKey:                apiKey,
 		RequestService:        processor.RequestService,
 		UsageLogService:       processor.UsageLogService,
@@ -354,6 +355,7 @@ func (processor *ChatCompletionOrchestrator) Process(ctx context.Context, reques
 		// so persistence and execution observe the same provider request.
 		verifyResponsesAttempt(outbound),
 		finalizeTransportRequest(outbound),
+		applyGeminiHistorySignatures(outbound),
 	)
 	if link, ok := ctx.Value(guardianLinkageKey{}).(guardianLinkage); ok {
 		middlewares = append(middlewares, &guardianLinkageMiddleware{link: link, outbound: outbound})

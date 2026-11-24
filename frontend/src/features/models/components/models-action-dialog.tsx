@@ -20,7 +20,7 @@ import { AutoComplete } from '@/components/auto-complete';
 import { AutoCompleteSelect } from '@/components/auto-complete-select';
 import { useModels } from '../context/models-context';
 import { DEVELOPER_IDS, DEVELOPER_ICONS } from '../data/constants';
-import { useCreateModel, useUpdateModel } from '../data/models';
+import { useCreateModel, useQueryAllModels, useUpdateModel } from '../data/models';
 import { useDevelopersData } from '../data/providers';
 import { isSuggestedModel, withMiniMaxFlash } from '../data/model-suggestions';
 import { type Provider, type ProviderModel, resolveVision } from '../data/providers.schema';
@@ -56,6 +56,12 @@ export function ModelsActionDialog() {
 
   const isEdit = open === 'edit';
   const isOpen = open === 'create' || open === 'edit';
+  const { data: existingModels, isLoading: isLoadingGroups } = useQueryAllModels({}, { enabled: isOpen });
+
+  const groupOptions = useMemo(() => {
+    const groups = existingModels?.edges.map(({ node }) => node.group).filter((group) => group.trim()) ?? [];
+    return [...new Set(groups)].sort((a, b) => a.localeCompare(b)).map((group) => ({ value: group, label: group }));
+  }, [existingModels]);
 
   const providers = useMemo(() => {
     if (!developersData) return [];
@@ -318,11 +324,13 @@ export function ModelsActionDialog() {
                         <FormLabel>{t('models.fields.developer')}</FormLabel>
                         <FormControl>
                           <AutoComplete
+                            ref={field.ref}
                             selectedValue={selectedProvider}
                             onSelectedValueChange={handleProviderChange}
                             searchValue={developerSearchValue}
                             onSearchValueChange={setDeveloperSearchValue}
                             items={developerOptions}
+                            label={t('models.fields.developer')}
                             placeholder={t('models.fields.selectDeveloper')}
                             emptyMessage={t('models.fields.noModels')}
                             portalContainer={dialogContent}
@@ -342,22 +350,26 @@ export function ModelsActionDialog() {
                         <FormControl>
                           {selectedProvider && modelIdOptions.length > 0 ? (
                             <AutoComplete
+                              ref={field.ref}
                               selectedValue={modelIdInput}
                               onSelectedValueChange={handleModelIdChange}
                               searchValue={modelIdSearchValue}
                               onSearchValueChange={handleModelIdSearchChange}
                               items={modelIdOptions}
+                              label={t('models.fields.modelId')}
                               placeholder={t('models.fields.modelIdPlaceholder')}
                               emptyMessage={t('models.fields.noModels')}
                               portalContainer={dialogContent}
                             />
                           ) : (
                             <AutoComplete
+                              ref={field.ref}
                               selectedValue={modelIdInput}
                               onSelectedValueChange={handleModelIdChange}
                               searchValue={modelIdSearchValue}
                               onSearchValueChange={handleModelIdSearchChange}
                               items={[]}
+                              label={t('models.fields.modelId')}
                               placeholder={t('models.fields.modelIdPlaceholder')}
                               emptyMessage={t('models.fields.noModels')}
                               portalContainer={dialogContent}
@@ -411,7 +423,20 @@ export function ModelsActionDialog() {
                       <FormItem>
                         <FormLabel>{t('models.fields.group')}</FormLabel>
                         <FormControl>
-                          <Input {...field} />
+                          <AutoComplete
+                            ref={field.ref}
+                            selectedValue={field.value}
+                            onSelectedValueChange={field.onChange}
+                            searchValue={field.value}
+                            onSearchValueChange={field.onChange}
+                            items={groupOptions}
+                            isLoading={isLoadingGroups}
+                            label={t('models.fields.group')}
+                            placeholder={t('models.fields.groupPlaceholder')}
+                            emptyMessage={t('common.noResultsFound')}
+                            clearOnReselect={false}
+                            portalContainer={dialogContent}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -836,6 +861,11 @@ export function ModelsActionDialog() {
               </div>
             </div>
 
+            {Object.keys(form.formState.errors).length > 0 && (
+              <p role='alert' className='shrink-0 pt-2 text-sm text-destructive'>
+                {t('models.messages.invalidForm')}
+              </p>
+            )}
             <DialogFooter pinned divided>
               <Button type='button' variant='outline' onClick={handleClose}>
                 {t('common.buttons.cancel')}

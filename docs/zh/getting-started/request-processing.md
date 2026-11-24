@@ -37,6 +37,26 @@ flowchart TD
 
 ## 各阶段说明
 
+### 请求体大小
+
+模型 HTTP 接口默认接受最大 128 MiB 的请求。内联图片按 Base64 编码后的大小计算。使用压缩时，传输大小和解压后的大小都受同一上限约束。
+
+可在 `server.max_request_body_size` 或环境变量 `AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE` 中设置上限，例如 `256M`。修改后重启 AxonHub。超限时客户端收到 HTTP 413 和具体上限。项目的请求列表会显示失败记录，请求体位置只保留超限原因、大小上限等诊断信息。
+
+#### 在 Cloud Run 上接收超过 32 MiB 的请求
+
+AxonHub 的主端口同时支持 HTTP/1.1 和明文 HTTP/2（h2c）。开启端到端 HTTP/2 后，Cloud Run 在入口处理 HTTPS，再通过 h2c 将请求转发给容器。此时请求可以超过 Cloud Run 对 HTTP/1 规定的 32 MiB 上限，模型请求仍受 AxonHub 自身的大小设置约束。[Cloud Run 请求配额](https://cloud.google.com/run/quotas#networking_limits)
+
+部署包含 h2c 支持的镜像时，在 Cloud Run 服务的“网络”中勾选“使用端到端 HTTP/2”，再部署新修订版本。容器端口应与 AxonHub 的监听端口一致。使用默认端口 `8090` 时，也可以用下面的命令部署，将 `SERVICE`、`IMAGE` 和 `REGION` 换成服务名、镜像地址和区域。[Cloud Run HTTP/2 配置](https://cloud.google.com/run/docs/configuring/http2)
+
+```sh
+gcloud run deploy SERVICE --image IMAGE --region REGION --port 8090 --use-http2
+```
+
+在本地验证镜像时，用支持 HTTP/2 的 curl 执行 `curl -i --http2-prior-knowledge http://localhost:8090/health`。返回 `HTTP/2 200` 即表示容器已通过 h2c 响应。
+
+如果使用 Responses 的 WebSocket 接口，Google 建议承载 WebSocket 连接的 Cloud Run 服务关闭端到端 HTTP/2。[Cloud Run WebSocket 指南](https://cloud.google.com/run/docs/triggering/websockets)
+
 ### 上游超时
 
 在 YAML 配置中设置以下服务端选项（值为时间长度）：

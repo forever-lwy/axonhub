@@ -73,10 +73,9 @@ func (h *DoubaoHandlers) CreateTask(c *gin.Context) {
 	defer cancel()
 	ctx := c.Request.Context()
 
-	genericReq, err := httpclient.ReadHTTPRequest(c.Request)
+	genericReq, err := readModelRequest(c)
 	if err != nil {
-		httpErr := h.CreateOrchestrator.Inbound.TransformError(ctx, err)
-		c.JSON(httpErr.StatusCode, json.RawMessage(httpErr.Body))
+		writeModelReadError(c, err, h.CreateOrchestrator)
 		return
 	}
 

@@ -223,7 +223,7 @@ func convertLLMToGeminiRequestWithConfig(chatReq *llm.Request, config *Config) *
 			}
 
 		default:
-			content := convertLLMMessageToGeminiContent(&msg)
+			content := convertLLMMessageToGeminiContent(&msg, chatReq.APIFormat)
 			if content != nil {
 				contents = append(contents, content)
 			}
@@ -331,7 +331,7 @@ func hasStrictFunctionTool(tools []llm.Tool) bool {
 }
 
 // convertLLMMessageToGeminiContent converts an LLM Message to Gemini Content.
-func convertLLMMessageToGeminiContent(msg *llm.Message) *Content {
+func convertLLMMessageToGeminiContent(msg *llm.Message, source llm.APIFormat) *Content {
 	if msg == nil {
 		return nil
 	}
@@ -438,7 +438,7 @@ func convertLLMMessageToGeminiContent(msg *llm.Message) *Content {
 				Args: args,
 			},
 		}
-		if signature := getOutbountGeminiToolCallThoughtSignature(toolCall); signature != nil {
+		if signature := shared.GeminiReplaySignature(getInboundGeminiToolCallThoughtSignature(toolCall), source); signature != nil {
 			part.ThoughtSignature = *signature
 			hasToolCallThoughtSignature = true
 		}
@@ -452,14 +452,10 @@ func convertLLMMessageToGeminiContent(msg *llm.Message) *Content {
 	}
 
 	if !hasToolCallThoughtSignature {
-		// https://ai.google.dev/gemini-api/docs/gemini-3#migrating_from_other_models
-		// If there are tool calls but no thought signature, use a default one.
-		// This field is not compatible with OpenAI sdk, so we use the default value.
-		// We try the best to support this fields to keep this fields in the chat conversions, so we use the ReasoningSignature to hold the field,
-		// And this field will be preserved during claude code trace, will not degrade the gemini model performance.
-		msgThoughtSignature := shared.DecodeGeminiThoughtSignature(msg.ReasoningSignature)
-
-		if (len(msg.ToolCalls) > 0 || msg.ReasoningContent != nil) && msgThoughtSignature == nil {
+		// A message-level signature may carry the first tool call across protocols.
+		// Google documents the migration placeholder for imported function calls.
+		msgThoughtSignature := shared.GeminiReplaySignature(msg.ReasoningSignature, source)
+		if firstFunctionCallPart != nil && msgThoughtSignature == nil {
 			msgThoughtSignature = lo.ToPtr(ContextEngineeringThoughtSignature)
 		}
 

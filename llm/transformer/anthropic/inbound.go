@@ -172,17 +172,20 @@ func (t *InboundTransformer) TransformError(ctx context.Context, rawErr error) *
 	}
 
 	if llmErr, ok := errors.AsType[*llm.ResponseError](rawErr); ok {
+		body := &AnthropicError{
+			Type:       llmErr.Detail.Type,
+			StatusCode: llmErr.StatusCode,
+			RequestID:  llmErr.Detail.RequestID,
+			Error:      ErrorDetail{Type: llmErr.Detail.Type, Message: llmErr.Detail.Message},
+		}
+		if llmErr.StatusCode == http.StatusRequestEntityTooLarge {
+			body.Type = "error"
+			body.Error.Type = "request_too_large"
+		}
 		return &httpclient.Error{
 			StatusCode: llmErr.StatusCode,
 			Status:     http.StatusText(llmErr.StatusCode),
-			Body: xjson.MustMarshal(
-				&AnthropicError{
-					Type:       llmErr.Detail.Type,
-					StatusCode: llmErr.StatusCode,
-					RequestID:  llmErr.Detail.RequestID,
-					Error:      ErrorDetail{Type: llmErr.Detail.Type, Message: llmErr.Detail.Message},
-				},
-			),
+			Body:       xjson.MustMarshal(body),
 		}
 	}
 

@@ -23,6 +23,7 @@ import (
 	"github.com/looplj/axonhub/internal/server/biz"
 	"github.com/looplj/axonhub/internal/server/db"
 	"github.com/looplj/axonhub/internal/server/gc"
+	"github.com/looplj/axonhub/internal/server/middleware"
 )
 
 type Config struct {
@@ -171,6 +172,9 @@ func unmarshal(v *viper.Viper) (Config, error) {
 	if config.APIServer.LLMStreamIdleTimeout < 0 {
 		return Config{}, fmt.Errorf("server.llm_stream_idle_timeout must not be negative")
 	}
+	if config.APIServer.MaxRequestBodySize <= 0 {
+		return Config{}, fmt.Errorf("server.max_request_body_size must be greater than zero")
+	}
 
 	basePath, err := server.NormalizeBasePath(config.APIServer.BasePath)
 	if err != nil {
@@ -272,6 +276,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("server.llm_request_timeout", "600s")
 	v.SetDefault("server.llm_stream_request_timeout", "1800s")
 	v.SetDefault("server.llm_stream_idle_timeout", "600s")
+	v.SetDefault("server.max_request_body_size", middleware.DefaultMaxRequestBodySize)
 	v.SetDefault("server.sse_keep_alive.enabled", false)
 	v.SetDefault("server.sse_keep_alive.interval", "15s")
 	v.SetDefault("server.trace.thread_header", "AH-Thread-Id")

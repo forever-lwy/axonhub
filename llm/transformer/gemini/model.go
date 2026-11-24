@@ -97,12 +97,15 @@ func (p Part) MarshalJSON() ([]byte, error) {
 	return json.Marshal(partAlias(p))
 }
 
-// UnmarshalJSON accepts inline_data as a fallback for inlineData.
+// UnmarshalJSON also accepts protobuf field names in native conversation history.
 func (p *Part) UnmarshalJSON(data []byte) error {
 	type partAlias Part
 	var decoded struct {
 		partAlias
-		InlineDataSnake *Blob `json:"inline_data"`
+		InlineDataSnake       *Blob             `json:"inline_data"`
+		FunctionCallSnake     *FunctionCall     `json:"function_call"`
+		FunctionResponseSnake *FunctionResponse `json:"function_response"`
+		ThoughtSignatureSnake string            `json:"thought_signature"`
 	}
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return err
@@ -110,6 +113,15 @@ func (p *Part) UnmarshalJSON(data []byte) error {
 	*p = Part(decoded.partAlias)
 	if p.InlineData == nil {
 		p.InlineData = decoded.InlineDataSnake
+	}
+	if p.FunctionCall == nil {
+		p.FunctionCall = decoded.FunctionCallSnake
+	}
+	if p.FunctionResponse == nil {
+		p.FunctionResponse = decoded.FunctionResponseSnake
+	}
+	if p.ThoughtSignature == "" {
+		p.ThoughtSignature = decoded.ThoughtSignatureSnake
 	}
 	return nil
 }

@@ -128,6 +128,27 @@ func TestSSEKeepAliveDefaultsToDisabled(t *testing.T) {
 	}
 }
 
+func TestMaxRequestBodySize(t *testing.T) {
+	defaults, _, err := loadConfig(writeTestConfig(t, ""))
+	if err != nil || defaults.APIServer.MaxRequestBodySize != 128<<20 {
+		t.Fatalf("default request body size = %d, err = %v", defaults.APIServer.MaxRequestBodySize, err)
+	}
+	file := writeTestConfig(t, "server:\n  max_request_body_size: 80M\n")
+	cfg, _, err := loadConfig(file)
+	if err != nil || cfg.APIServer.MaxRequestBodySize != 80<<20 {
+		t.Fatalf("configured request body size = %d, err = %v", cfg.APIServer.MaxRequestBodySize, err)
+	}
+	t.Setenv("AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE", "256M")
+	cfg, _, err = loadConfig(file)
+	if err != nil || cfg.APIServer.MaxRequestBodySize != 256<<20 {
+		t.Fatalf("environment request body size = %d, err = %v", cfg.APIServer.MaxRequestBodySize, err)
+	}
+	t.Setenv("AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE", "0")
+	if _, _, err := loadConfig(file); err == nil {
+		t.Fatal("expected a positive request body limit")
+	}
+}
+
 func TestMetricsExporterConfigFromEnvironment(t *testing.T) {
 	t.Setenv("AXONHUB_METRICS_ENABLED", "true")
 	t.Setenv("AXONHUB_METRICS_EXPORTER_TYPE", "otlphttp")

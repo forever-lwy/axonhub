@@ -37,6 +37,26 @@ flowchart TD
 
 ## Stage Overview
 
+### Request body size
+
+LLM HTTP endpoints accept up to 128 MiB by default. Inline images count at their Base64-encoded size. Both the wire size and the decompressed size must fit within the limit.
+
+Set `server.max_request_body_size` or the `AXONHUB_SERVER_MAX_REQUEST_BODY_SIZE` environment variable to a size such as `256M`, then restart AxonHub. Oversized requests return HTTP 413 with the limit. The project's request list shows a failed request with a diagnostic placeholder explaining why the body was omitted.
+
+#### Requests over 32 MiB on Cloud Run
+
+AxonHub accepts HTTP/1.1 and cleartext HTTP/2 (h2c) on the same port. Cloud Run terminates HTTPS at its frontend and forwards requests to the container over h2c when end-to-end HTTP/2 is enabled. This removes Cloud Run's 32 MiB HTTP/1 request limit. AxonHub's configured limit still applies to model requests. [Cloud Run request limits](https://cloud.google.com/run/quotas#networking_limits)
+
+When deploying an image with h2c support, select **Use HTTP/2 end-to-end** in the Cloud Run service's **Networking** tab and deploy the new revision. Set the container port to AxonHub's listening port. For the default port (`8090`), the equivalent CLI command is below. Replace `SERVICE`, `IMAGE`, and `REGION` with your service name, image reference, and region. [Cloud Run HTTP/2 configuration](https://cloud.google.com/run/docs/configuring/http2)
+
+```sh
+gcloud run deploy SERVICE --image IMAGE --region REGION --port 8090 --use-http2
+```
+
+To check the image locally, run `curl -i --http2-prior-knowledge http://localhost:8090/health` with an HTTP/2-capable curl. An `HTTP/2 200` response confirms the container serves h2c.
+
+If you use the Responses WebSocket endpoint, Google recommends keeping end-to-end HTTP/2 disabled on the Cloud Run service that handles WebSocket connections. [Cloud Run WebSocket guide](https://cloud.google.com/run/docs/triggering/websockets)
+
 ### Upstream timeouts
 
 Configure these server settings in the YAML configuration (values are durations):

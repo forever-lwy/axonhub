@@ -1575,6 +1575,12 @@ func TestAPIKeyService_ProjectKeysAreSharedAndPersonalCredentialsArePrivate(t *t
 	personal := client.APIKey.Create().SetUserID(creator.ID).SetProjectID(project.ID).
 		SetType(apikey.TypePersonal).SetName("Personal").SetKey("test-personal-key").SaveX(setup)
 
+	t.Run("credential is hidden without a direct user", func(t *testing.T) {
+		got, err := service.RevealAPIKey(base, personal)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
 	for _, tc := range []struct {
 		name string
 		user *ent.User

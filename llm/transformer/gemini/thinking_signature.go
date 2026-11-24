@@ -1,13 +1,13 @@
 package gemini
 
 import (
-	"encoding/base64"
-
 	"github.com/looplj/axonhub/llm"
 	"github.com/looplj/axonhub/llm/transformer/shared"
 )
 
-var ContextEngineeringThoughtSignature = base64.StdEncoding.EncodeToString([]byte("context_engineering_is_the_way_to_go"))
+// ContextEngineeringThoughtSignature is Google's REST placeholder for imported
+// function calls. The validator expects this literal string on the wire.
+var ContextEngineeringThoughtSignature = "skip_thought_signature_validator"
 
 const transformerMetadataKeyGoogleThoughtSignature = shared.TransformerMetadataKeyGoogleThoughtSignature
 
@@ -51,17 +51,4 @@ func setOutboundToolCallThoughtSignature(toolCall *llm.ToolCall, signature strin
 	}
 
 	toolCall.TransformerMetadata[transformerMetadataKeyGoogleThoughtSignature] = *encoded
-}
-
-func getOutbountGeminiToolCallThoughtSignature(toolCall llm.ToolCall) *string {
-	if toolCall.TransformerMetadata == nil {
-		return nil
-	}
-
-	raw, ok := toolCall.TransformerMetadata[transformerMetadataKeyGoogleThoughtSignature].(string)
-	if !ok || raw == "" {
-		return nil
-	}
-
-	return shared.DecodeGeminiThoughtSignature(&raw)
 }

@@ -218,22 +218,6 @@ func (handlers *PlaygroundHandlers) ChatCompletion(c *gin.Context) {
 	defer cancel()
 	ctx := c.Request.Context()
 
-	genericReq, err := httpclient.ReadHTTPRequest(c.Request)
-	if err != nil {
-		log.Error(ctx, "Error reading HTTP request", log.Cause(err))
-		c.JSON(http.StatusBadRequest, PlaygroundResponseError{
-			Error: struct {
-				Code    int    `json:"code,omitempty"`
-				Message string `json:"message"`
-			}{
-				Code:    http.StatusBadRequest,
-				Message: err.Error(),
-			},
-		})
-
-		return
-	}
-
 	channelIDStr := c.Query("channel_id")
 	if channelIDStr == "" {
 		channelIDStr = c.GetHeader("X-Channel-ID")
@@ -266,6 +250,21 @@ func (handlers *PlaygroundHandlers) ChatCompletion(c *gin.Context) {
 		ctx = contexts.WithProjectID(ctx, projectID.ID)
 		// Update the request context
 		c.Request = c.Request.WithContext(ctx)
+	}
+
+	genericReq, err := readModelRequest(c)
+	if err != nil {
+		if errors.Is(err, httpclient.ErrRequestBodyTooLarge) {
+			response := handlers.HandleError(recordOversizedRequest(c, err, handlers.ChatCompletionOrchestrator.RequestService))
+			c.JSON(response.Status, response)
+			return
+		}
+		log.Error(ctx, "Error reading HTTP request", log.Cause(err))
+		response := PlaygroundResponseError{Status: http.StatusBadRequest}
+		response.Error.Code = response.Status
+		response.Error.Message = err.Error()
+		c.JSON(response.Status, response)
+		return
 	}
 
 	log.Debug(ctx, "Received request", log.Any("request", genericReq), log.String("channel_id", channelIDStr), log.String("project_id", projectIDStr))

@@ -24,6 +24,7 @@ import (
 	"github.com/looplj/axonhub/llm/pipeline"
 	"github.com/looplj/axonhub/llm/streams"
 	"github.com/looplj/axonhub/llm/transformer"
+	"github.com/looplj/axonhub/llm/transformer/gemini"
 	"github.com/looplj/axonhub/llm/transformer/shared"
 )
 
@@ -571,6 +572,7 @@ type PersistentOutboundTransformer struct {
 	wrapped                       transformer.Outbound
 	state                         *PersistenceState
 	outboundLlmRequestMiddlewares []pipeline.OutboundLlmRequestMiddleware
+	geminiReplay                  geminiSignatureReplay
 }
 
 func shouldForceStreamingForCandidate(candidate *ChannelModelsCandidate, req *llm.Request) bool {
@@ -936,6 +938,9 @@ func (p *PersistentOutboundTransformer) GetRequestedModel() string {
 // HasMoreChannels returns true if there are more candidates available for retry.
 // It implements the pipeline.Retryable interface.
 func (p *PersistentOutboundTransformer) HasMoreChannels() bool {
+	if !p.state.StreamResponseHeaders.retryAllowed() {
+		return false
+	}
 	if p.state.PluginOverloaded {
 		return false
 	}
@@ -954,6 +959,9 @@ func (p *PersistentOutboundTransformer) resetPassThroughStreamState() {
 // NextChannel moves to the next available candidate for retry.
 // It implements the pipeline.Retryable interface.
 func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
+	if err := p.state.StreamResponseHeaders.discardAttempt(); err != nil {
+		return err
+	}
 	if lifecycleOwner := streamLifecycleFromContext(ctx); lifecycleOwner != nil {
 		lifecycleOwner.closeAttempt()
 	}
@@ -980,6 +988,7 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 	p.state.StreamCompleted = false
 	p.state.OutboundStreamTerminal = streamTerminalNone
 	p.state.CleanEOFCompletionEvidence = false
+	p.geminiReplay = keepGeminiHistory
 	p.trackCurrentChannelSelection()
 	p.refreshCandidateAPIFormat(ctx, candidate, p.state.CurrentModelIndex, p.state.LlmRequest)
 	p.wrapped = selectOutboundForCandidate(candidate)
@@ -1003,6 +1012,9 @@ func (p *PersistentOutboundTransformer) NextChannel(ctx context.Context) error {
 // It implements the pipeline.ChannelRetryable interface, it just check the error is retryable, the
 // pipeline will ensure the maxSameChannelRetries is not exceeded.
 func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
+	if !p.state.StreamResponseHeaders.retryAllowed() {
+		return false
+	}
 	if p.state.CurrentCandidate == nil {
 		return false
 	}
@@ -1016,6 +1028,17 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 	// queue/RPM rejections can still move to the next channel.
 	if isLocalAdmissionError(err) {
 		return false
+	}
+
+	if req := p.state.RawProviderRequest; p.isGeminiHistoryRequest(req) && isGeminiSignatureRejection(err) {
+		if p.geminiReplay != migrateGeminiHistory {
+			if _, changed := gemini.MigrateHistorySignatures(req.Body, llm.APIFormat(req.APIFormat)); changed {
+				p.geminiReplay = retryGeminiHistory
+				return true
+			}
+		}
+		// A second identical validation failure can only benefit from a new target.
+		return p.state.CurrentModelIndex+1 < len(p.state.CurrentCandidate.Models)
 	}
 
 	// Empty response detection: allow same-channel retry so the pipeline can
@@ -1088,6 +1111,9 @@ func (p *PersistentOutboundTransformer) CanRetry(err error) bool {
 // This will reset the request execution for the same channel, so that the same request can be retried.
 // It will try the next model in the same channel if available.
 func (p *PersistentOutboundTransformer) PrepareForRetry(ctx context.Context) error {
+	if err := p.state.StreamResponseHeaders.discardAttempt(); err != nil {
+		return err
+	}
 	if lifecycleOwner := streamLifecycleFromContext(ctx); lifecycleOwner != nil {
 		lifecycleOwner.closeAttempt()
 	}
@@ -1111,10 +1137,17 @@ func (p *PersistentOutboundTransformer) PrepareForRetry(ctx context.Context) err
 
 	p.resetPassThroughStreamState()
 
+	if p.geminiReplay == retryGeminiHistory {
+		p.geminiReplay = migrateGeminiHistory
+		p.trackCurrentChannelSelection()
+		return nil
+	}
+
 	// If there's another model in the list, advance to it.
 	if p.state.CurrentModelIndex+1 < len(candidate.Models) {
 		// Increase the model index to the next model.
 		p.state.CurrentModelIndex++
+		p.geminiReplay = keepGeminiHistory
 		p.refreshCandidateAPIFormat(ctx, candidate, p.state.CurrentModelIndex, p.state.LlmRequest)
 		p.wrapped = selectOutboundForCandidate(candidate)
 		p.trackCurrentChannelSelection()

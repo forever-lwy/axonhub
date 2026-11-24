@@ -145,4 +145,56 @@ test.describe('Admin Models Management', () => {
 
     await expect(modelsTable.locator('tbody tr').filter({ hasText: updatedName })).toHaveCount(0)
   })
+
+  test('can create custom model IDs with a new or existing group', async ({ page }) => {
+    const prefix = `pw-custom-${Date.now()}`
+    const group = `${prefix}-group`
+    const createdIds: string[] = []
+
+    try {
+      for (const useExistingGroup of [false, true]) {
+        const modelID = `${prefix}-${useExistingGroup ? 'existing' : 'new'}`
+        await page.getByRole('button', { name: /^(Add Model|添加模型)$/ }).click()
+        const dialog = page.getByRole('dialog')
+        await dialog.getByPlaceholder(/Select developer|选择开发者/).fill('OpenAI')
+        await page.getByRole('option', { name: 'OpenAI', exact: true }).click()
+        await dialog.getByPlaceholder(/Enter or select model ID|输入或选择模型 ID/).fill(modelID)
+        await dialog.getByLabel(/^(Name|名称)$/).fill(modelID)
+
+        const groupInput = dialog.getByLabel(/^(Group|分组)$/)
+        await groupInput.fill(useExistingGroup ? prefix : group)
+        if (useExistingGroup) {
+          await page.getByRole('option', { name: group, exact: true }).click()
+          await expect(groupInput).toHaveValue(group)
+          await dialog.getByLabel(/^(Cache Read|缓存读取)$/).fill('0.005')
+        }
+
+        const [response] = await Promise.all([
+          page.waitForResponse((response) => {
+            const request = response.request()
+            return request.url().endsWith('/admin/graphql') &&
+              request.method() === 'POST' && request.postDataJSON().operationName === 'CreateModel'
+          }),
+          dialog.getByRole('button', { name: /^(Create|创建)$/ }).click(),
+        ])
+        const result = await response.json()
+        if (result.data?.createModel?.id) createdIds.push(result.data.createModel.id)
+        expect(result.errors).toBeUndefined()
+
+        const { input } = response.request().postDataJSON().variables
+        expect(input).toMatchObject({ modelID, group })
+        if (useExistingGroup) expect(input.modelCard.cost).toMatchObject({ cacheRead: 0.005 })
+        await expect(dialog).not.toBeVisible()
+      }
+    } finally {
+      const token = await page.evaluate(() => localStorage.getItem('axonhub_access_token'))
+      for (const id of createdIds) {
+        const response = await page.request.post('/admin/graphql', {
+          headers: { Authorization: `Bearer ${token}` },
+          data: { query: 'mutation DeleteModel($id: ID!) { deleteModel(id: $id) }', variables: { id } },
+        })
+        expect(await response.json()).toMatchObject({ data: { deleteModel: true } })
+      }
+    }
+  })
 })

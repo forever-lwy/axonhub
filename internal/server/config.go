@@ -105,6 +105,9 @@ type Config struct {
 	// Zero disables the stream idle deadline.
 	LLMStreamIdleTimeout time.Duration `conf:"llm_stream_idle_timeout" yaml:"llm_stream_idle_timeout" json:"llm_stream_idle_timeout"`
 
+	// MaxRequestBodySize limits both wire and decoded LLM HTTP request bodies.
+	MaxRequestBodySize MemorySize `conf:"max_request_body_size" yaml:"max_request_body_size" json:"max_request_body_size"`
+
 	Safeguards safeguards.Config `conf:"safeguards" yaml:"safeguards" json:"safeguards"`
 
 	SSEKeepAlive SSEKeepAlive `conf:"sse_keep_alive" yaml:"sse_keep_alive" json:"sse_keep_alive"`

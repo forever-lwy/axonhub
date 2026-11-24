@@ -25,18 +25,14 @@ func NewInboundTransformer() *InboundTransformer {
 	return &InboundTransformer{}
 }
 
-// extractRequestParams extracts the model and stream flag from the request URL.
-func extractRequestParams(httpReq *httpclient.Request) (string, bool, error) {
-	urlParts := strings.Split(httpReq.Path, "/")
-	if len(urlParts) < 1 {
-		return "", false, fmt.Errorf("%w: invalid request path: %s", ErrInvalidRequestURL, httpReq.Path)
-	}
-
+// ParseGenerateContentPath extracts the model and stream flag without reading the request body.
+func ParseGenerateContentPath(path string) (string, bool, error) {
+	urlParts := strings.Split(path, "/")
 	suffix := urlParts[len(urlParts)-1]
 
 	suffixParts := strings.Split(suffix, ":")
 	if len(suffixParts) < 2 {
-		return "", false, fmt.Errorf("%w: invalid request path: %s", ErrInvalidRequestURL, httpReq.Path)
+		return "", false, fmt.Errorf("%w: invalid request path: %s", ErrInvalidRequestURL, path)
 	}
 
 	switch suffixParts[1] {
@@ -45,7 +41,7 @@ func extractRequestParams(httpReq *httpclient.Request) (string, bool, error) {
 	case "streamGenerateContent":
 		return suffixParts[0], true, nil
 	default:
-		return "", false, fmt.Errorf("%w: invalid request path: %s", ErrInvalidRequestURL, httpReq.Path)
+		return "", false, fmt.Errorf("%w: invalid request path: %s", ErrInvalidRequestURL, path)
 	}
 }
 
@@ -59,7 +55,7 @@ func (t *InboundTransformer) TransformRequest(ctx context.Context, httpReq *http
 		return nil, fmt.Errorf("%w: request body is empty", transformer.ErrInvalidRequest)
 	}
 
-	model, stream, err := extractRequestParams(httpReq)
+	model, stream, err := ParseGenerateContentPath(httpReq.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -192,7 +188,7 @@ func (t *InboundTransformer) TransformError(ctx context.Context, rawErr error) *
 // mapHTTPStatusToGeminiStatus maps HTTP status codes to Gemini status strings.
 func mapHTTPStatusToGeminiStatus(statusCode int) string {
 	switch statusCode {
-	case http.StatusBadRequest:
+	case http.StatusBadRequest, http.StatusRequestEntityTooLarge:
 		return "INVALID_ARGUMENT"
 	case http.StatusUnauthorized:
 		return "UNAUTHENTICATED"

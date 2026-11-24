@@ -17,11 +17,22 @@ import (
 	"github.com/samber/lo"
 )
 
-var maxRequestBodySize = 64 * 1024 * 1024
+const defaultMaxRequestBodySize = 64 << 20
 
 var ErrRequestBodyTooLarge = errors.New("request body too large")
 
+// ReadHTTPRequest keeps the standalone reader's 64 MiB limit.
+// Server HTTP routes pass their configured limit to ReadHTTPRequestWithLimit.
 func ReadHTTPRequest(rawReq *http.Request) (*Request, error) {
+	return ReadHTTPRequestWithLimit(rawReq, defaultMaxRequestBodySize)
+}
+
+// ReadHTTPRequestWithLimit bounds both the wire body and the decoded body, in bytes.
+func ReadHTTPRequestWithLimit(rawReq *http.Request, maxBytes int64) (*Request, error) {
+	if rawReq.ContentLength > maxBytes {
+		return nil, fmt.Errorf("%w: Content-Length %d exceeds the %d byte limit", ErrRequestBodyTooLarge, rawReq.ContentLength, maxBytes)
+	}
+
 	req := &Request{
 		Method:     rawReq.Method,
 		URL:        rawReq.URL.String(),
@@ -36,13 +47,13 @@ func ReadHTTPRequest(rawReq *http.Request) (*Request, error) {
 		RawRequest: rawReq,
 	}
 
-	body, err := readLimited(rawReq.Body, maxRequestBodySize)
+	body, err := readLimited(rawReq.Body, maxBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read request body: %w", err)
 	}
 
 	if len(body) > 0 {
-		body, err = decodeRequestBody(body, req.Headers)
+		body, err = decodeRequestBody(body, req.Headers, maxBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -53,7 +64,7 @@ func ReadHTTPRequest(rawReq *http.Request) (*Request, error) {
 	return req, nil
 }
 
-func decodeRequestBody(body []byte, headers http.Header) ([]byte, error) {
+func decodeRequestBody(body []byte, headers http.Header, maxBytes int64) ([]byte, error) {
 	contentEncoding := headers.Get("Content-Encoding")
 	if contentEncoding == "" {
 		return body, nil
@@ -72,7 +83,7 @@ func decodeRequestBody(body []byte, headers http.Header) ([]byte, error) {
 		}
 		defer reader.Close()
 
-		decoded, err := readLimited(reader, maxRequestBodySize)
+		decoded, err := readLimited(reader, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decompress gzip body: %w", err)
 		}
@@ -85,7 +96,7 @@ func decodeRequestBody(body []byte, headers http.Header) ([]byte, error) {
 	case "deflate":
 		// RFC 7230/2616 defines "deflate" as zlib (RFC 1950), but many clients send
 		// raw DEFLATE (RFC 1951). Try zlib first, fall back to raw DEFLATE.
-		decoded, err := decodeZlibOrFlate(body, maxRequestBodySize)
+		decoded, err := decodeZlibOrFlate(body, maxBytes)
 		if err != nil {
 			return nil, fmt.Errorf("failed to decompress deflate body: %w", err)
 		}
@@ -103,7 +114,7 @@ func decodeRequestBody(body []byte, headers http.Header) ([]byte, error) {
 		defer decoder.Close()
 
 		decoderReader := decoder.IOReadCloser()
-		decoded, err := readLimited(decoderReader, maxRequestBodySize)
+		decoded, err := readLimited(decoderReader, maxBytes)
 		closeErr := decoderReader.Close()
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode zstd compressed body: %w", err)
@@ -122,7 +133,7 @@ func decodeRequestBody(body []byte, headers http.Header) ([]byte, error) {
 	}
 }
 
-func decodeZlibOrFlate(body []byte, maxSize int) ([]byte, error) {
+func decodeZlibOrFlate(body []byte, maxSize int64) ([]byte, error) {
 	reader, err := zlib.NewReader(bytes.NewReader(body))
 	if err == nil {
 		defer reader.Close()
@@ -134,13 +145,16 @@ func decodeZlibOrFlate(body []byte, maxSize int) ([]byte, error) {
 	return readLimited(flateReader, maxSize)
 }
 
-func readLimited(r io.Reader, maxSize int) ([]byte, error) {
-	body, err := io.ReadAll(io.LimitReader(r, int64(maxSize)+1))
-	if err != nil {
-		return nil, err
+func readLimited(r io.Reader, maxBytes int64) ([]byte, error) {
+	if r == nil {
+		return nil, nil
 	}
-	if len(body) > maxSize {
-		return nil, ErrRequestBodyTooLarge
+	body, err := io.ReadAll(http.MaxBytesReader(nil, io.NopCloser(r), maxBytes))
+	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			return nil, fmt.Errorf("%w: limit is %d bytes", ErrRequestBodyTooLarge, maxBytes)
+		}
+		return nil, err
 	}
 	return body, nil
 }
