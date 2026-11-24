@@ -45,7 +45,7 @@ jobs:
 
   dispatch:
     needs: check
-    if: github.event_name == 'push' && github.ref == 'refs/heads/unstable'
+    if: github.repository == 'looplj/axonhub' && github.event_name == 'push' && github.ref == 'refs/heads/unstable'
     runs-on: ubuntu-latest
     steps:
       # GITHUB_TOKEN cannot create a dispatch in another repository.
