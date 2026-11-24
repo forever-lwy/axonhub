@@ -10,7 +10,7 @@ import (
 )
 
 // SystemJWTSecretKey identifies the system setting reserved for JWT signing.
-const SystemJWTSecretKey = "system_jwt_secret_key"
+const SystemJWTSecretKey = "system_jwt_secret_key" // #nosec G101 -- Database setting name for the generated signing secret.
 
 type (
 	// QueryPolicy will deny if the query rule returns nil or privacy.Skip.
