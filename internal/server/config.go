@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/looplj/axonhub/internal/server/realtime"
 	"github.com/looplj/axonhub/internal/server/safeguards"
 	"github.com/looplj/axonhub/internal/tracing"
 )
@@ -107,6 +108,8 @@ type Config struct {
 
 	// MaxRequestBodySize limits both wire and decoded LLM HTTP request bodies.
 	MaxRequestBodySize MemorySize `conf:"max_request_body_size" yaml:"max_request_body_size" json:"max_request_body_size"`
+
+	Realtime realtime.Config `conf:"realtime" yaml:"realtime" json:"realtime"`
 
 	Safeguards safeguards.Config `conf:"safeguards" yaml:"safeguards" json:"safeguards"`
 
